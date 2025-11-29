@@ -5,78 +5,353 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from sqlalchemy import create_engine, text
 
-DATA_FILE = 'data/stunden.csv'
-HOLIDAY_FILE = 'data/feiertage.csv'
-COLUMNS = ['Datum', 'Mitarbeiter', 'Projekt', 'Stunden', 'Beschreibung', 'Typ']
+# Database Connection
+DB_URL = "postgresql://user:password@localhost:5432/hourtracking"
+engine = create_engine(DB_URL)
+
+def init_db():
+    """Initializes the database tables."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS entries (
+                id SERIAL PRIMARY KEY,
+                datum DATE,
+                mitarbeiter TEXT,
+                projekt TEXT,
+                stunden FLOAT,
+                beschreibung TEXT,
+                typ TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS employees (
+                name TEXT PRIMARY KEY
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS projects (
+                name TEXT PRIMARY KEY
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS employee_projects (
+                employee TEXT REFERENCES employees(name) ON DELETE CASCADE,
+                project TEXT REFERENCES projects(name) ON DELETE CASCADE,
+                PRIMARY KEY (employee, project)
+            )
+        """))
+        conn.commit()
+        
+        # Auto-migration: Populate projects from entries if empty
+        res = conn.execute(text("SELECT COUNT(*) FROM projects")).scalar()
+        if res == 0:
+            print("Migrating projects from entries...")
+            conn.execute(text("""
+                INSERT INTO projects (name)
+                SELECT DISTINCT projekt FROM entries 
+                WHERE projekt IS NOT NULL AND projekt != ''
+                ON CONFLICT DO NOTHING
+            """))
+            # Auto-assign projects to employees based on history
+            conn.execute(text("""
+                INSERT INTO employee_projects (employee, project)
+                SELECT DISTINCT mitarbeiter, projekt FROM entries
+                WHERE mitarbeiter IS NOT NULL AND projekt IS NOT NULL AND projekt != ''
+                ON CONFLICT DO NOTHING
+            """))
+            conn.commit()
+
+# Initialize on module load (or call explicitly)
+try:
+    init_db()
+except Exception as e:
+    print(f"DB Init Error (might be waiting for container): {e}")
 
 def load_data():
-    """Loads data from the CSV file."""
-    if not os.path.exists(DATA_FILE):
-        return pd.DataFrame(columns=COLUMNS)
+    """Loads data from the DB."""
     try:
-        df = pd.read_csv(DATA_FILE)
-        # Ensure all columns exist
-        for col in COLUMNS:
-            if col not in df.columns:
-                df[col] = ""
-        return df
+        return pd.read_sql("SELECT * FROM entries", engine)
     except Exception as e:
         print(f"Error loading data: {e}")
-        return pd.DataFrame(columns=COLUMNS)
+        return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
 
 def save_entry(datum, mitarbeiter, projekt, stunden, beschreibung, typ):
-    """Saves a new entry to the CSV file."""
-    df = load_data()
-    new_entry = pd.DataFrame([{
-        'Datum': datum,
-        'Mitarbeiter': mitarbeiter,
-        'Projekt': projekt,
-        'Stunden': stunden,
-        'Beschreibung': beschreibung,
-        'Typ': typ
-    }])
-    df = pd.concat([df, new_entry], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
+    """Saves a new entry to the DB."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO entries (datum, mitarbeiter, projekt, stunden, beschreibung, typ)
+            VALUES (:datum, :mitarbeiter, :projekt, :stunden, :beschreibung, :typ)
+        """), {
+            "datum": datum,
+            "mitarbeiter": mitarbeiter,
+            "projekt": projekt,
+            "stunden": stunden,
+            "beschreibung": beschreibung,
+            "typ": typ
+        })
+        conn.commit()
 
-def get_employees(df):
-    """Returns a list of unique employees."""
-    if df.empty:
-        return []
-    return sorted(df['Mitarbeiter'].dropna().unique().tolist())
+def update_entry(id, datum, mitarbeiter, projekt, stunden, beschreibung, typ):
+    """Updates an existing entry."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE entries 
+            SET datum=:datum, mitarbeiter=:mitarbeiter, projekt=:projekt, stunden=:stunden, beschreibung=:beschreibung, typ=:typ
+            WHERE id=:id
+        """), {
+            "id": int(id),
+            "datum": datum,
+            "mitarbeiter": mitarbeiter,
+            "projekt": projekt,
+            "stunden": stunden,
+            "beschreibung": beschreibung,
+            "typ": typ
+        })
+        conn.commit()
 
-def get_projects(df):
-    """Returns a list of unique projects."""
-    if df.empty:
-        return []
-    return sorted(df['Projekt'].dropna().unique().tolist())
-
-def load_holidays():
-    """Loads holidays from CSV."""
-    if not os.path.exists(HOLIDAY_FILE):
-        return []
+def save_month_entries(mitarbeiter, year, month, entries):
+    """
+    Replaces all entries for a specific employee and month with the new list.
+    entries: list of dicts {'datum': ..., 'projekt': ..., 'stunden': ..., 'beschreibung': ..., 'typ': ...}
+    """
     try:
-        df = pd.read_csv(HOLIDAY_FILE)
-        return pd.to_datetime(df['Datum']).dt.date.tolist()
+        with engine.connect() as conn:
+            # 1. Delete existing entries for this user/month
+            conn.execute(text("""
+                DELETE FROM entries 
+                WHERE mitarbeiter = :mitarbeiter 
+                AND EXTRACT(YEAR FROM datum) = :year 
+                AND EXTRACT(MONTH FROM datum) = :month
+            """), {"mitarbeiter": mitarbeiter, "year": int(year), "month": int(month)})
+            
+            # 2. Insert new entries
+            if entries:
+                conn.execute(text("""
+                    INSERT INTO entries (datum, mitarbeiter, projekt, stunden, beschreibung, typ)
+                    VALUES (:datum, :mitarbeiter, :projekt, :stunden, :beschreibung, :typ)
+                """), entries)
+            
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error saving month entries: {e}")
+        return False
+
+def save_matrix_entries(mitarbeiter, year, month, df_matrix):
+    """
+    Parses the edited matrix DataFrame and saves it to the DB.
+    df_matrix: Index=Projects, Columns=Days (1..31)
+    """
+    entries = []
+    import calendar
+    num_days = calendar.monthrange(year, month)[1]
+    
+    # Iterate over the matrix
+    # df_matrix index is Projects
+    # Columns are days (as strings or ints)
+    
+    for project in df_matrix.index:
+        if project == "Kommentar": continue # Should not happen as row, but safety check
+        
+        for day_col in df_matrix.columns:
+            try:
+                day = int(day_col)
+                if day < 1 or day > num_days: continue
+                
+                datum = date(year, month, day)
+                value = df_matrix.at[project, day_col]
+                
+                # Check for None, empty string, or NaN
+                if value is None or str(value).strip() == "" or str(value).lower() == 'nan':
+                    continue
+                
+                # Parse value
+                stunden = 0.0
+                typ = "Arbeit"
+                
+                # Try float
+                try:
+                    stunden = float(str(value).replace(',', '.'))
+                    typ = "Arbeit"
+                except ValueError:
+                    # Code
+                    code = str(value).upper().strip()
+                    if code in ['U', 'KK', 'F', '/']:
+                        typ = code
+                        stunden = 0.0
+                    else:
+                        print(f"Skipping invalid value '{value}' for {project} on {datum}")
+                        continue
+                
+                # Description? In this view (Project x Day), we don't have a dedicated comment cell per entry easily.
+                # Unless we have a "Kommentar" ROW.
+                # Let's check if there is a "Kommentar" row.
+                beschreibung = ""
+                if "Kommentar" in df_matrix.index:
+                    beschreibung = str(df_matrix.at["Kommentar", day_col] or "")
+                
+                entries.append({
+                    "datum": datum,
+                    "mitarbeiter": mitarbeiter,
+                    "projekt": project,
+                    "stunden": stunden,
+                    "beschreibung": beschreibung,
+                    "typ": typ
+                })
+                
+            except Exception as e:
+                print(f"Error parsing cell {project}/{day_col}: {e}")
+                continue
+            
+    return save_month_entries(mitarbeiter, year, month, entries)
+
+def get_employees():
+    """Returns a list of unique employees."""
+    try:
+        df = pd.read_sql("SELECT name FROM employees ORDER BY name", engine)
+        return df['name'].tolist()
     except:
         return []
 
+def save_employee(name):
+    """Adds a new employee."""
+    try:
+        with engine.connect() as conn:
+            # Check if exists
+            res = conn.execute(text("SELECT 1 FROM employees WHERE name = :name"), {"name": name}).fetchone()
+            if not res:
+                conn.execute(text("INSERT INTO employees (name) VALUES (:name)"), {"name": name})
+                conn.commit()
+                return True
+    except Exception as e:
+        print(f"Error saving employee: {e}")
+    return False
+
+def remove_employee(name):
+    """Removes an employee."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM employees WHERE name = :name"), {"name": name})
+            conn.commit()
+            return True
+    except:
+        return False
+
+def rename_employee(old_name, new_name):
+    """Renames an employee and updates history."""
+    try:
+        with engine.connect() as conn:
+            # Update employee table
+            conn.execute(text("UPDATE employees SET name = :new_name WHERE name = :old_name"), 
+                         {"new_name": new_name, "old_name": old_name})
+            # Update entries table
+            conn.execute(text("UPDATE entries SET mitarbeiter = :new_name WHERE mitarbeiter = :old_name"), 
+                         {"new_name": new_name, "old_name": old_name})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error renaming: {e}")
+        return False
+
+def get_projects():
+    """Returns a list of all available projects."""
+    try:
+        df = pd.read_sql("SELECT name FROM projects ORDER BY name", engine)
+        return df['name'].tolist()
+    except:
+        return []
+
+def add_project(name):
+    """Adds a new project."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("INSERT INTO projects (name) VALUES (:name) ON CONFLICT DO NOTHING"), {"name": name})
+            conn.commit()
+            return True
+    except:
+        return False
+
+def delete_project(name):
+    """Deletes a project."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM projects WHERE name = :name"), {"name": name})
+            conn.commit()
+            return True
+    except:
+        return False
+
+def get_assigned_projects(employee):
+    """Returns projects assigned to an employee."""
+    try:
+        df = pd.read_sql(text("SELECT project FROM employee_projects WHERE employee = :emp ORDER BY project"), 
+                         engine, params={"emp": employee})
+        return df['project'].tolist()
+    except:
+        return []
+
+def update_assigned_projects(employee, projects):
+    """Updates the list of projects assigned to an employee."""
+    try:
+        with engine.connect() as conn:
+            # Clear existing
+            conn.execute(text("DELETE FROM employee_projects WHERE employee = :emp"), {"emp": employee})
+            # Insert new
+            if projects:
+                data = [{"emp": employee, "proj": p} for p in projects]
+                conn.execute(text("INSERT INTO employee_projects (employee, project) VALUES (:emp, :proj)"), data)
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error updating assignments: {e}")
+        return False
+
+def load_holidays():
+    """Loads holidays."""
+    try:
+        df = pd.read_sql("SELECT datum FROM holidays", engine)
+        return pd.to_datetime(df['datum']).dt.date.tolist()
+    except:
+        return []
+
+def get_holidays_df():
+    """Returns holidays as a DataFrame."""
+    try:
+        return pd.read_sql("SELECT datum as Datum, name as Name FROM holidays ORDER BY datum", engine)
+    except:
+        return pd.DataFrame(columns=['Datum', 'Name'])
+
 def save_holiday(datum, name):
     """Saves a holiday."""
-    if not os.path.exists(HOLIDAY_FILE):
-        df = pd.DataFrame(columns=['Datum', 'Name'])
-    else:
-        df = pd.read_csv(HOLIDAY_FILE)
-    
-    new_entry = pd.DataFrame([{'Datum': datum, 'Name': name}])
-    df = pd.concat([df, new_entry], ignore_index=True)
-    df.drop_duplicates(subset=['Datum'], inplace=True)
-    df.to_csv(HOLIDAY_FILE, index=False)
+    try:
+        with engine.connect() as conn:
+            # Check if exists
+            res = conn.execute(text("SELECT 1 FROM holidays WHERE datum = :datum"), {"datum": datum}).fetchone()
+            if not res:
+                conn.execute(text("INSERT INTO holidays (datum, name) VALUES (:datum, :name)"), 
+                             {"datum": datum, "name": name})
+                conn.commit()
+    except Exception as e:
+        print(f"Error saving holiday: {e}")
 
 def generate_pdf_report(year, filename):
     """Generates a PDF report for the given year."""
     df = load_data()
     if df.empty: return False
+    
+    # Normalize columns to match old logic (lowercase from DB to Capitalized for report logic if needed, or adjust logic)
+    # DB columns are lowercase: datum, mitarbeiter, projekt, stunden, beschreibung, typ
+    # Let's rename for compatibility with existing report logic
+    df = df.rename(columns={
+        'datum': 'Datum', 
+        'mitarbeiter': 'Mitarbeiter', 
+        'projekt': 'Projekt', 
+        'stunden': 'Stunden', 
+        'beschreibung': 'Beschreibung', 
+        'typ': 'Typ'
+    })
     
     df['Datum'] = pd.to_datetime(df['Datum'])
     df_year = df[df['Datum'].dt.year == int(year)]
@@ -106,7 +381,7 @@ def generate_pdf_report(year, filename):
     elements.append(Paragraph(f"Stundenbericht {year}", styles['Title']))
     elements.append(Spacer(1, 20))
 
-    # 1. Per Employee -> Month -> Project
+    # 1. Auswertung pro Mitarbeiter
     elements.append(Paragraph("1. Auswertung pro Mitarbeiter", styles['Heading1']))
     
     employees = sorted(df_year['Mitarbeiter'].unique())
@@ -114,34 +389,33 @@ def generate_pdf_report(year, filename):
         elements.append(Paragraph(f"Mitarbeiter: {emp}", styles['Heading2']))
         
         emp_df = df_year[df_year['Mitarbeiter'] == emp]
-        # Add Month column for sorting
         emp_df['Monat'] = emp_df['Datum'].dt.month
         
-        # Group by Month and Project
-        # We only care about 'Arbeit' for project hours usually, but let's show everything or filter?
-        # User said "hours on different projects", implying work.
         work_df = emp_df[emp_df['Typ'] == 'Arbeit']
         
         if not work_df.empty:
-            # Group by Month, Project
-            grouped = work_df.groupby(['Monat', 'Projekt'])['Stunden'].sum().reset_index()
+            # Group by Project then Month
+            grouped = work_df.groupby(['Projekt', 'Monat'])['Stunden'].sum().reset_index()
+            grouped = grouped.sort_values(['Projekt', 'Monat'])
             
-            data = [['Monat', 'Projekt', 'Stunden']]
+            data = [['Projekt', 'Monat', 'Stunden']]
             total_hours = 0
             
-            for month in sorted(grouped['Monat'].unique()):
-                month_name = date(int(year), month, 1).strftime('%B') # English month name by default, fine for now or map
-                # Simple mapping for German
+            current_proj = None
+            
+            for _, row in grouped.iterrows():
                 month_map = {1:'Januar', 2:'Februar', 3:'März', 4:'April', 5:'Mai', 6:'Juni', 7:'Juli', 8:'August', 9:'September', 10:'Oktober', 11:'November', 12:'Dezember'}
-                month_str = month_map.get(month, str(month))
+                month_str = month_map.get(row['Monat'], str(row['Monat']))
                 
-                month_data = grouped[grouped['Monat'] == month]
-                for _, row in month_data.iterrows():
-                    data.append([month_str, row['Projekt'], f"{row['Stunden']:.1f}"])
-                    total_hours += row['Stunden']
+                # Show project name only on change (cleaner look)
+                proj_display = row['Projekt'] if row['Projekt'] != current_proj else ""
+                current_proj = row['Projekt']
+                
+                data.append([proj_display, month_str, f"{row['Stunden']:.1f}"])
+                total_hours += row['Stunden']
             
             data.append(['', 'Gesamt', f"{total_hours:.1f}"])
-            add_table(data, col_widths=[100, 300, 100])
+            add_table(data, col_widths=[200, 100, 100])
         else:
             elements.append(Paragraph("Keine Arbeitsstunden verzeichnet.", styles['Normal']))
         
@@ -150,7 +424,6 @@ def generate_pdf_report(year, filename):
     # 2. Per Project -> Employee -> Month
     elements.append(Paragraph("2. Auswertung pro Projekt", styles['Heading1']))
     
-    # Filter only work for projects
     project_df_all = df_year[df_year['Typ'] == 'Arbeit']
     projects = sorted(project_df_all['Projekt'].unique())
     
@@ -165,7 +438,6 @@ def generate_pdf_report(year, filename):
         data = [['Mitarbeiter', 'Monat', 'Stunden']]
         total_hours = 0
         
-        # Sort by Employee then Month
         grouped = grouped.sort_values(['Mitarbeiter', 'Monat'])
         
         current_emp = None

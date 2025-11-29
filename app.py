@@ -9,101 +9,310 @@ st.set_page_config(page_title="Stundenerfassung", layout="wide")
 st.title("⏱️ Stundenerfassung")
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Eingabe", "Übersicht", "Berichte", "Einstellungen"])
+tab1, tab2, tab3, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Berichte", "Einstellungen"])
 
-# --- Tab 1: Eingabe ---
+# --- Tab 1: Übersicht (Matrix View) ---
 with tab1:
-    st.header("Neue Eintragung")
+    st.header("Übersicht & Erfassung")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        datum = st.date_input("Datum", date.today())
-        
-        # Load existing employees or allow new one
-        df = utils.load_data()
-        employees = utils.get_employees(df)
-        mitarbeiter = st.selectbox("Mitarbeiter", employees + ["Neu hinzufügen..."])
-        if mitarbeiter == "Neu hinzufügen...":
-            mitarbeiter = st.text_input("Name des Mitarbeiters")
-            
-        typ = st.radio("Typ", ["Arbeit", "Urlaub (U)", "Kindkrank (KK)"], horizontal=True)
-
-    with col2:
-        if typ == "Arbeit":
-            projects = utils.get_projects(df)
-            projekt = st.selectbox("Projekt", projects + ["Neu hinzufügen..."])
-            if projekt == "Neu hinzufügen...":
-                projekt = st.text_input("Projektname")
-            
-            stunden = st.number_input("Stunden", min_value=0.0, step=0.5, format="%.1f")
-            beschreibung = st.text_area("Beschreibung")
-        else:
-            projekt = typ.split("(")[1].replace(")", "") # Extract U or KK
-            stunden = 0.0 
-            beschreibung = typ
-            st.info(f"Für {typ} wird der Statuscode '{projekt}' gespeichert.")
-
-    if st.button("Speichern"):
-        if mitarbeiter:
-            type_code = "Arbeit"
-            if "Urlaub" in typ: type_code = "U"
-            elif "Kindkrank" in typ: type_code = "KK"
-            
-            # For U and KK, we save the code in Project column as well for visibility if needed, 
-            # or just rely on Type. Plan said Type column.
-            # Let's keep Project empty for U/KK to avoid cluttering project list, 
-            # but maybe useful to see in simple table. 
-            # Let's follow plan: Type is U/KK.
-            
-            utils.save_entry(datum, mitarbeiter, projekt if typ == "Arbeit" else "", stunden, beschreibung, type_code)
-            st.success("Eintrag gespeichert!")
-        else:
-            st.error("Bitte Mitarbeiter angeben.")
-
-# --- Tab 2: Übersicht ---
-with tab2:
-    st.header("Übersicht")
+    # Filters
+    col_filter1, col_filter2, col_filter3 = st.columns(3)
     
     df = utils.load_data()
     if not df.empty:
-        df['Datum'] = pd.to_datetime(df['Datum'])
+        df['datum'] = pd.to_datetime(df['datum']).dt.date
+    
+    with col_filter1:
+        current_year = date.today().year
+        years = sorted(list(set(df['datum'].apply(lambda x: x.year).unique().tolist() + [current_year])), reverse=True)
+        selected_year = st.selectbox("Jahr", years)
         
-        years = sorted(df['Datum'].dt.year.unique(), reverse=True)
-        selected_year = st.selectbox("Jahr auswählen", years)
+    with col_filter2:
+        employees = utils.get_employees()
+        selected_emp_filter = st.selectbox("Mitarbeiter", ["Alle"] + employees)
+
+    month_names = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+    
+    # Loop through all months
+    for month_idx, month_name in enumerate(month_names):
+        month_num = month_idx + 1
         
-        df_year = df[df['Datum'].dt.year == selected_year]
+        # Default expander state: Expanded if current month or has data? 
+        # Let's just expand all or current. User said "one under another", maybe they want to see them.
+        # Let's expand the current month by default, others collapsed? Or all collapsed?
+        # "display all the months one under another" -> maybe all expanded?
+    # --- VIEW 1: ALLE (Project -> Employee x Month) ---
+    if selected_emp_filter == "Alle":
+        st.subheader(f"Jahresübersicht {selected_year}")
         
-        # Pivot Table: Employee vs Month (Hours)
-        st.subheader("Stunden pro Mitarbeiter pro Monat")
-        if not df_year.empty:
-            df_year['Monat'] = df_year['Datum'].dt.month
+        if not df.empty:
+            # Filter Data by Year
+            df_year = df[df['datum'].apply(lambda x: x.year) == selected_year]
             
-            # Filter for Work hours only for the sum
-            work_df = df_year[df_year['Typ'] == 'Arbeit']
-            
-            if not work_df.empty:
-                pivot = work_df.pivot_table(
-                    index='Mitarbeiter', 
-                    columns='Monat', 
-                    values='Stunden', 
-                    aggfunc='sum', 
-                    fill_value=0
-                )
-                # Rename columns to month names
-                month_map = {1:'Jan', 2:'Feb', 3:'Mär', 4:'Apr', 5:'Mai', 6:'Jun', 7:'Jul', 8:'Aug', 9:'Sep', 10:'Okt', 11:'Nov', 12:'Dez'}
-                pivot.columns = [month_map.get(c, c) for c in pivot.columns]
+            if not df_year.empty:
+                # Calculate Grand Total (sum of all projects)
+                grand_total = df_year['stunden'].sum()
+                st.metric(label="Gesamt (Alle Projekte)", value=f"{grand_total:.2f} Std")
+                st.divider()
                 
-                st.dataframe(pivot)
+                # Get all projects
+                all_projects = utils.get_projects()
+                
+                for proj in all_projects:
+                    with st.expander(f"Projekt: {proj}", expanded=True):
+                        # Filter for project
+                        df_proj = df_year[df_year['projekt'] == proj]
+                        
+                        if not df_proj.empty:
+                            # Pivot: Index=Mitarbeiter, Columns=Month
+                            df_proj['Monat'] = df_proj['datum'].apply(lambda x: x.month)
+                            
+                            pivot = df_proj.pivot_table(
+                                index='mitarbeiter', 
+                                columns='Monat', 
+                                values='stunden', 
+                                aggfunc='sum', 
+                                fill_value=0
+                            )
+                            
+                            # Ensure all months 1-12 are present
+                            for m in range(1, 13):
+                                if m not in pivot.columns:
+                                    pivot[m] = 0
+                            
+                            # Sort columns
+                            pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+                            
+                            # Rename columns to Month Names
+                            month_map = {i: month_names[i-1] for i in range(1, 13)}
+                            pivot = pivot.rename(columns=month_map)
+                            
+                            # Add Total Column
+                            pivot['Gesamt'] = pivot.sum(axis=1)
+                            
+                            # Add Total Row
+                            pivot.loc['Gesamt'] = pivot.sum(axis=0)
+                            
+                            # Display Project Total (Sum of Sums)
+                            project_total = pivot.at['Gesamt', 'Gesamt']
+                            st.caption(f"**Projekt Gesamt: {project_total:.2f} Std**")
+                            
+                            # Styling
+                            def highlight_total(s):
+                                is_total_col = s.name == 'Gesamt'
+                                return ['background-color: #2b2b2b; color: #ffffff; font-weight: bold' if is_total_col or s.name == 'Gesamt' else '' for i in s.index]
+
+                            st.dataframe(pivot.style.apply(highlight_total, axis=0), use_container_width=True)
+                        else:
+                            st.info("Keine Stunden für dieses Projekt in diesem Jahr.")
             else:
-                st.info("Keine Arbeitsstunden in diesem Jahr.")
-            
-            st.subheader("Detaillierte Daten")
-            st.dataframe(df_year)
+                st.info("Keine Daten für dieses Jahr.")
         else:
-            st.info("Keine Daten für dieses Jahr.")
+            st.info("Keine Daten vorhanden.")
+
+    # --- VIEW 2: SINGLE EMPLOYEE (Assigned Projects x Day) ---
     else:
-        st.info("Noch keine Daten vorhanden.")
+        st.subheader(f"Erfassung: {selected_emp_filter} - {selected_year}")
+        
+        # Get Assigned Projects
+        assigned_projects = utils.get_assigned_projects(selected_emp_filter)
+        if not assigned_projects:
+            st.warning("Diesem Mitarbeiter sind keine Projekte zugewiesen. Bitte unter 'Mitarbeiter' Projekte zuweisen.")
+        
+        # Loop through all months
+        for month_idx, month_name in enumerate(month_names):
+            month_num = month_idx + 1
+            
+            # Always expanded
+            with st.expander(f"{month_name} {selected_year}", expanded=True):
+                
+                # 1. Prepare Matrix Structure
+                import calendar
+                num_days = calendar.monthrange(selected_year, month_num)[1]
+                days = list(range(1, num_days + 1))
+                
+                # Filter data for this user/month
+                user_data = pd.DataFrame()
+                if not df.empty:
+                    mask = (df['mitarbeiter'] == selected_emp_filter) & \
+                           (df['datum'].apply(lambda x: x.year) == selected_year) & \
+                           (df['datum'].apply(lambda x: x.month) == month_num)
+                    user_data = df[mask]
+                
+                # Create Matrix DataFrame
+                # Index: Assigned Projects only (no Kommentar)
+                # Columns: Days (1..31)
+                
+                # Initialize
+                matrix_data = {}
+                for d in days:
+                    # Check weekend
+                    curr_date = date(selected_year, month_num, d)
+                    is_weekend = curr_date.weekday() >= 5 # 5=Sat, 6=Sun
+                    default_val = "/" if is_weekend else None
+                    
+                    # Only use assigned projects
+                    matrix_data[d] = [default_val]*len(assigned_projects)
+                
+                # Row Index Mapping
+                row_index = assigned_projects
+                
+                # Fill with existing data
+                df_matrix = pd.DataFrame(matrix_data, index=row_index)
+                
+                if not user_data.empty:
+                    for _, row in user_data.iterrows():
+                        d = row['datum'].day
+                        proj = row['projekt']
+                        val = None
+                        
+                        if row['typ'] == 'Arbeit':
+                            val = row['stunden']
+                        else:
+                            val = row['typ'] # Code
+                        
+                        # If project exists in index
+                        if proj in df_matrix.index:
+                            df_matrix.at[proj, d] = val
+
+                # Display Editor
+                edited_matrix = st.data_editor(
+                    df_matrix,
+                    use_container_width=True,
+                    key=f"editor_{month_num}",
+                    num_rows="fixed" # Prevent adding/deleting rows
+                )
+                
+                col_add, col_save = st.columns([2, 1])
+                with col_save:
+                    st.write("") # Spacer
+                    st.write("")
+                    if st.button("💾 Monat speichern", type="primary", key=f"btn_save_{month_num}"):
+                        # Pre-save Validation
+                        validation_error = False
+                        for proj in edited_matrix.index:
+                            for day_col in edited_matrix.columns:
+                                val = edited_matrix.at[proj, day_col]
+                                if val is not None and str(val).strip() != "" and str(val).lower() != 'nan':
+                                    # Check if valid
+                                    is_valid = False
+                                    # 1. Number
+                                    try:
+                                        float(str(val).replace(',', '.'))
+                                        is_valid = True
+                                    except ValueError:
+                                        # 2. Code
+                                        if str(val).upper().strip() in ['U', 'KK', 'F', '/']:
+                                            is_valid = True
+                                    
+                                    if not is_valid:
+                                        st.error(f"Ungültiger Wert '{val}' bei {proj} am {day_col}. Erlaubt: Zahlen, U, KK, F.")
+                                        validation_error = True
+                        
+                        if not validation_error:
+                            if utils.save_matrix_entries(selected_emp_filter, selected_year, month_num, edited_matrix):
+                                st.success("Gespeichert!")
+                                st.rerun()
+                            else:
+                                st.error("Fehler beim Speichern.")
+
+# --- Tab 2: Mitarbeiter & Projekte ---
+with tab2:
+    st.header("Verwaltung")
+    
+    tab2_1, tab2_2 = st.tabs(["Mitarbeiter", "Projekte"])
+    
+    # Sub-Tab: Mitarbeiter
+    with tab2_1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Neuen Mitarbeiter anlegen")
+            new_emp = st.text_input("Name")
+            if st.button("Hinzufügen"):
+                if new_emp:
+                    if utils.save_employee(new_emp):
+                        st.success(f"Mitarbeiter '{new_emp}' hinzugefügt.")
+                        st.rerun()
+                    else:
+                        st.warning("Mitarbeiter existiert bereits.")
+                else:
+                    st.error("Bitte Name eingeben.")
+                    
+        with col2:
+            st.subheader("Bearbeiten / Löschen")
+            employees = utils.get_employees()
+            if employees:
+                selected_emp = st.selectbox("Mitarbeiter auswählen", employees)
+                
+                # Rename
+                new_name = st.text_input("Neuer Name", value=selected_emp)
+                if st.button("Umbenennen"):
+                    if new_name and new_name != selected_emp:
+                        utils.rename_employee(selected_emp, new_name)
+                        st.success(f"Umbenannt in '{new_name}'.")
+                        st.rerun()
+                
+                # Remove
+                if st.button("Löschen", type="primary"):
+                    if utils.remove_employee(selected_emp):
+                        st.success(f"Mitarbeiter '{selected_emp}' gelöscht.")
+                        st.rerun()
+            else:
+                st.info("Keine Mitarbeiter vorhanden.")
+
+    # Sub-Tab: Projekte & Zuweisung
+    with tab2_2:
+        col_p1, col_p2 = st.columns(2)
+        
+        with col_p1:
+            st.subheader("Projekte verwalten")
+            # Add Project
+            new_proj_name = st.text_input("Neues Projekt")
+            if st.button("Projekt erstellen"):
+                if new_proj_name:
+                    if utils.add_project(new_proj_name):
+                        st.success(f"Projekt '{new_proj_name}' erstellt.")
+                        st.rerun()
+                    else:
+                        st.error("Fehler beim Erstellen.")
+            
+            # List / Delete
+            st.write("---")
+            all_projects = utils.get_projects()
+            if all_projects:
+                proj_to_delete = st.selectbox("Projekt löschen", all_projects)
+                if st.button("Projekt löschen", type="primary"):
+                    if utils.delete_project(proj_to_delete):
+                        st.success("Gelöscht.")
+                        st.rerun()
+            else:
+                st.info("Keine Projekte.")
+                
+        with col_p2:
+            st.subheader("Projekt-Zuweisung")
+            employees = utils.get_employees()
+            if employees:
+                assign_emp = st.selectbox("Mitarbeiter für Zuweisung", employees, key="assign_emp")
+                
+                # Multi-select for projects
+                all_projects = utils.get_projects()
+                current_assigned = utils.get_assigned_projects(assign_emp)
+                
+                selected_projects = st.multiselect(
+                    "Zugewiesene Projekte",
+                    all_projects,
+                    default=current_assigned
+                )
+                
+                if st.button("Zuweisung speichern"):
+                    if utils.update_assigned_projects(assign_emp, selected_projects):
+                        st.success("Gespeichert!")
+                        st.rerun()
+                    else:
+                        st.error("Fehler beim Speichern.")
+            else:
+                st.info("Bitte erst Mitarbeiter anlegen.")
 
 # --- Tab 3: Berichte ---
 with tab3:
@@ -111,15 +320,15 @@ with tab3:
     
     df = utils.load_data()
     if not df.empty:
-        df['Datum'] = pd.to_datetime(df['Datum'])
-        years = sorted(df['Datum'].dt.year.unique(), reverse=True)
+        df['datum'] = pd.to_datetime(df['datum'])
+        years = sorted(df['datum'].dt.year.unique(), reverse=True)
         report_year = st.selectbox("Jahr für Bericht", years, key="report_year")
         
         col1, col2 = st.columns(2)
         
         with col1:
             # CSV Download
-            csv_data = df[df['Datum'].dt.year == report_year].to_csv(index=False).encode('utf-8')
+            csv_data = df[df['datum'].dt.year == report_year].to_csv(index=False).encode('utf-8')
             st.download_button(
                 label=f"📄 Download CSV {report_year}",
                 data=csv_data,
@@ -162,8 +371,8 @@ with tab4:
                 
     with col2:
         st.write("Gespeicherte Feiertage:")
-        if os.path.exists(utils.HOLIDAY_FILE):
-            h_df = pd.read_csv(utils.HOLIDAY_FILE)
+        h_df = utils.get_holidays_df()
+        if not h_df.empty:
             st.dataframe(h_df)
         else:
             st.info("Keine Feiertage gespeichert.")
