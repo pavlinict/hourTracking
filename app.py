@@ -491,7 +491,7 @@ with tab4:
     with col_cleanup2:
         if st.button("🗑️ System & Platzhalter entfernen", use_container_width=True, 
                      disabled=not (has_system or has_platzhalter)):
-            success, message = utils.cleanup_system_placeholders()
+            success, message, count_deleted = utils.cleanup_system_placeholders()
             if success:
                 st.success(message)
                 st.rerun()

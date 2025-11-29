@@ -478,15 +478,40 @@ def delete_project(name):
 
 def cleanup_system_placeholders():
     """
-    Removes System employee, Platzhalter project, and all associated entries.
-    Returns (success, message)
+    Removes System employee, Platzhalter project, and ALL associated entries.
+    This includes entries where:
+    - mitarbeiter = 'System'
+    - projekt = 'Platzhalter'
+    - typ = 'System'
+    - beschreibung contains 'Jahr' and 'aktiviert' (year activation entries)
+    Returns (success, message, count_deleted)
     """
     try:
         with engine.connect() as conn:
-            # Delete entries associated with System and Platzhalter
+            # Count entries before deletion
+            count_before = conn.execute(text("""
+                SELECT COUNT(*) FROM entries 
+                WHERE mitarbeiter = 'System' 
+                   OR projekt = 'Platzhalter'
+                   OR typ = 'System'
+                   OR (beschreibung LIKE 'Jahr%aktiviert')
+            """)).scalar()
+            
+            # Delete ALL entries associated with System and Platzhalter
+            # This includes entries with System as employee, Platzhalter as project,
+            # System as type, or year activation descriptions
             conn.execute(text("""
                 DELETE FROM entries 
-                WHERE mitarbeiter = 'System' OR projekt = 'Platzhalter'
+                WHERE mitarbeiter = 'System' 
+                   OR projekt = 'Platzhalter'
+                   OR typ = 'System'
+                   OR (beschreibung LIKE 'Jahr%aktiviert')
+            """))
+            
+            # Delete employee-project assignments for System
+            conn.execute(text("""
+                DELETE FROM employee_projects 
+                WHERE employee = 'System' OR project = 'Platzhalter'
             """))
             
             # Delete System employee
@@ -496,9 +521,9 @@ def cleanup_system_placeholders():
             conn.execute(text("DELETE FROM projects WHERE name = 'Platzhalter'"))
             
             conn.commit()
-            return True, "System und Platzhalter erfolgreich entfernt"
+            return True, f"System und Platzhalter erfolgreich entfernt ({count_before} Einträge gelöscht)", count_before
     except Exception as e:
-        return False, f"Fehler beim Entfernen: {str(e)}"
+        return False, f"Fehler beim Entfernen: {str(e)}", 0
 
 def get_assigned_projects(employee):
     """Returns projects assigned to an employee."""
