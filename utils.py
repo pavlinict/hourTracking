@@ -14,17 +14,7 @@ engine = create_engine(DB_URL)
 def init_db():
     """Initializes the database tables."""
     with engine.connect() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS entries (
-                id SERIAL PRIMARY KEY,
-                datum DATE,
-                mitarbeiter TEXT,
-                projekt TEXT,
-                stunden FLOAT,
-                beschreibung TEXT,
-                typ TEXT
-            )
-        """))
+        # 1. Create referenced tables first (Employees & Projects)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS employees (
                 name TEXT PRIMARY KEY
@@ -35,6 +25,23 @@ def init_db():
                 name TEXT PRIMARY KEY
             )
         """))
+        
+        # 2. Create Entries table with Foreign Keys
+        # Note: If table already exists, this won't add FKs. 
+        # We rely on ALTER TABLE below for existing DBs.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS entries (
+                id SERIAL PRIMARY KEY,
+                datum DATE,
+                mitarbeiter TEXT REFERENCES employees(name) ON UPDATE CASCADE ON DELETE SET NULL,
+                projekt TEXT REFERENCES projects(name) ON UPDATE CASCADE ON DELETE SET NULL,
+                stunden FLOAT,
+                beschreibung TEXT,
+                typ TEXT
+            )
+        """))
+        
+        # 3. Create Employee-Projects table
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS employee_projects (
                 employee TEXT REFERENCES employees(name) ON DELETE CASCADE,
@@ -44,9 +51,25 @@ def init_db():
         """))
         conn.commit()
         
-        # Auto-migration: Populate projects from entries if empty
-        res = conn.execute(text("SELECT COUNT(*) FROM projects")).scalar()
-        if res == 0:
+        # 4. Auto-migration: Populate employees/projects from entries if empty
+        # This ensures that if we have existing entries, we backfill the master tables
+        # so that FK constraints (if applied) are satisfied.
+        
+        # Check/Migrate Employees
+        res_emp = conn.execute(text("SELECT COUNT(*) FROM employees")).scalar()
+        if res_emp == 0:
+            print("Migrating employees from entries...")
+            conn.execute(text("""
+                INSERT INTO employees (name)
+                SELECT DISTINCT mitarbeiter FROM entries 
+                WHERE mitarbeiter IS NOT NULL AND mitarbeiter != ''
+                ON CONFLICT DO NOTHING
+            """))
+            conn.commit()
+
+        # Check/Migrate Projects
+        res_proj = conn.execute(text("SELECT COUNT(*) FROM projects")).scalar()
+        if res_proj == 0:
             print("Migrating projects from entries...")
             conn.execute(text("""
                 INSERT INTO projects (name)
@@ -54,14 +77,42 @@ def init_db():
                 WHERE projekt IS NOT NULL AND projekt != ''
                 ON CONFLICT DO NOTHING
             """))
-            # Auto-assign projects to employees based on history
+            conn.commit()
+            
+        # Migrate Employee-Project Assignments
+        # (Only if we just migrated data, or check if empty?)
+        # Let's just run it safely with ON CONFLICT
+        conn.execute(text("""
+            INSERT INTO employee_projects (employee, project)
+            SELECT DISTINCT mitarbeiter, projekt FROM entries
+            WHERE mitarbeiter IS NOT NULL AND projekt IS NOT NULL AND projekt != ''
+            ON CONFLICT DO NOTHING
+        """))
+        conn.commit()
+
+        # 5. Attempt to add FK constraints to 'entries' if they don't exist (for existing DBs)
+        # We do this AFTER migration to ensure data is consistent.
+        try:
             conn.execute(text("""
-                INSERT INTO employee_projects (employee, project)
-                SELECT DISTINCT mitarbeiter, projekt FROM entries
-                WHERE mitarbeiter IS NOT NULL AND projekt IS NOT NULL AND projekt != ''
-                ON CONFLICT DO NOTHING
+                ALTER TABLE entries 
+                ADD CONSTRAINT fk_entries_employees 
+                FOREIGN KEY (mitarbeiter) REFERENCES employees(name) 
+                ON UPDATE CASCADE ON DELETE SET NULL
             """))
             conn.commit()
+        except Exception:
+            conn.rollback() # Constraint likely exists or data violation
+
+        try:
+            conn.execute(text("""
+                ALTER TABLE entries 
+                ADD CONSTRAINT fk_entries_projects 
+                FOREIGN KEY (projekt) REFERENCES projects(name) 
+                ON UPDATE CASCADE ON DELETE SET NULL
+            """))
+            conn.commit()
+        except Exception:
+            conn.rollback() # Constraint likely exists or data violation
 
 # Initialize on module load (or call explicitly)
 try:
