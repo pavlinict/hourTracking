@@ -466,6 +466,40 @@ with tab4:
     
     st.divider()
     
+    # Cleanup System and Platzhalter
+    st.subheader("Aufräumen")
+    st.write("Entferne System-Mitarbeiter und Platzhalter-Projekt (wird beim Hinzufügen von Jahren erstellt)")
+    
+    col_cleanup1, col_cleanup2 = st.columns([2, 1])
+    with col_cleanup1:
+        # Check if System or Platzhalter exist
+        employees = utils.get_employees()
+        projects = utils.get_projects()
+        has_system = "System" in employees
+        has_platzhalter = "Platzhalter" in projects
+        
+        if has_system or has_platzhalter:
+            status_text = []
+            if has_system:
+                status_text.append("System")
+            if has_platzhalter:
+                status_text.append("Platzhalter")
+            st.info(f"Gefunden: {', '.join(status_text)}")
+        else:
+            st.success("✅ Keine System/Platzhalter Einträge gefunden")
+    
+    with col_cleanup2:
+        if st.button("🗑️ System & Platzhalter entfernen", use_container_width=True, 
+                     disabled=not (has_system or has_platzhalter)):
+            success, message = utils.cleanup_system_placeholders()
+            if success:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+    
+    st.divider()
+    
     # Holiday Management
     st.subheader("Feiertage verwalten")
     

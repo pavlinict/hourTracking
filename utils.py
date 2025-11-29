@@ -476,6 +476,30 @@ def delete_project(name):
     except:
         return False
 
+def cleanup_system_placeholders():
+    """
+    Removes System employee, Platzhalter project, and all associated entries.
+    Returns (success, message)
+    """
+    try:
+        with engine.connect() as conn:
+            # Delete entries associated with System and Platzhalter
+            conn.execute(text("""
+                DELETE FROM entries 
+                WHERE mitarbeiter = 'System' OR projekt = 'Platzhalter'
+            """))
+            
+            # Delete System employee
+            conn.execute(text("DELETE FROM employees WHERE name = 'System'"))
+            
+            # Delete Platzhalter project
+            conn.execute(text("DELETE FROM projects WHERE name = 'Platzhalter'"))
+            
+            conn.commit()
+            return True, "System und Platzhalter erfolgreich entfernt"
+    except Exception as e:
+        return False, f"Fehler beim Entfernen: {str(e)}"
+
 def get_assigned_projects(employee):
     """Returns projects assigned to an employee."""
     try:
