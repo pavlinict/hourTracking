@@ -17,12 +17,47 @@ def get_db_url():
         pass # No secrets file
     return os.environ.get("DATABASE_URL", "postgresql://user:password@localhost:5432/hourtracking")
 
+def test_db_connection():
+    """Test database connection and return (success, error_message)."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, None
+    except Exception as e:
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            return False, (
+                "❌ Cannot resolve database hostname. This usually means:\n"
+                "1. Your Supabase project is paused (free tier pauses after 7 days of inactivity)\n"
+                "   → Go to https://supabase.com/dashboard and resume your project\n"
+                "2. Network connectivity issues\n"
+                "3. Incorrect hostname in connection string\n\n"
+                f"Error: {error_str}"
+            )
+        elif "password authentication failed" in error_str:
+            return False, f"❌ Database authentication failed. Check your password in .streamlit/secrets.toml\nError: {error_str}"
+        elif "Connection refused" in error_str or "could not connect" in error_str:
+            return False, (
+                f"❌ Cannot connect to database server.\n"
+                "If using local Docker: Make sure Docker is running and the database container is started:\n"
+                "  docker-compose up -d\n\n"
+                f"Error: {error_str}"
+            )
+        else:
+            return False, f"❌ Database connection error: {error_str}"
+
 DB_URL = get_db_url()
-engine = create_engine(DB_URL)
+engine = create_engine(DB_URL, pool_pre_ping=True, connect_args={"connect_timeout": 10})
 
 def init_db():
     """Initializes the database tables."""
     try:
+        # Test connection first
+        success, error_msg = test_db_connection()
+        if not success:
+            print(f"DB Init Error: {error_msg}")
+            return False
+        
         with engine.connect() as conn:
             # 1. Create referenced tables first (Employees & Projects)
             conn.execute(text("""
@@ -137,8 +172,14 @@ def init_db():
                 conn.commit()
             except Exception:
                 conn.rollback() # Constraint likely exists or data violation
+        return True
     except Exception as e:
-        print(f"DB Init Error: {e}")
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            print(f"DB Init Error: Cannot resolve database hostname. Your Supabase project may be paused. Go to https://supabase.com/dashboard to resume it.")
+        else:
+            print(f"DB Init Error: {e}")
+        return False
 
 # Initialize on module load (or call explicitly)
 init_db()
@@ -146,9 +187,26 @@ init_db()
 def load_data():
     """Loads data from the DB."""
     try:
+        # Test connection first
+        success, error_msg = test_db_connection()
+        if not success:
+            if st and hasattr(st, 'error'):
+                st.error(error_msg)
+            print(f"Error loading data: {error_msg}")
+            return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
+        
         return pd.read_sql("SELECT * FROM entries", engine)
     except Exception as e:
-        print(f"Error loading data: {e}")
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            msg = "Cannot resolve database hostname. Your Supabase project may be paused. Go to https://supabase.com/dashboard to resume it."
+            if st and hasattr(st, 'error'):
+                st.error(msg)
+            print(f"Error loading data: {msg}")
+        else:
+            if st and hasattr(st, 'error'):
+                st.error(f"Error loading data: {e}")
+            print(f"Error loading data: {e}")
         return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
 
 def save_entry(datum, mitarbeiter, projekt, stunden, beschreibung, typ):
