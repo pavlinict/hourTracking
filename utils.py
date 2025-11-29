@@ -8,14 +8,49 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy import create_engine, text
 import streamlit as st
 
+# Try to load dotenv if available (for .env file support)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, that's okay
+
 # Database Connection
 def get_db_url():
+    """
+    Get database URL from multiple sources (priority order):
+    1. Streamlit secrets (db_url) - Recommended for Streamlit apps
+    2. Individual environment variables (for .env file support)
+    3. DATABASE_URL environment variable
+    4. Default local database
+    
+    According to Streamlit docs: https://docs.streamlit.io/develop/concepts/connections/secrets-management
+    """
+    # Method 1: Streamlit secrets (recommended for Streamlit apps)
     try:
-        if "db_url" in st.secrets:
+        if hasattr(st, 'secrets') and "db_url" in st.secrets:
             return st.secrets["db_url"]
-    except FileNotFoundError:
-        pass # No secrets file
-    return os.environ.get("DATABASE_URL", "postgresql://user:password@localhost:5432/hourtracking")
+    except (FileNotFoundError, AttributeError, RuntimeError):
+        pass  # No secrets file, not in Streamlit context, or secrets not loaded
+    
+    # Method 2: Individual environment variables (like .env file)
+    # Useful for local development or non-Streamlit environments
+    user = os.getenv("user") or os.getenv("DB_USER") or os.getenv("POSTGRES_USER")
+    password = os.getenv("password") or os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD")
+    host = os.getenv("host") or os.getenv("DB_HOST") or os.getenv("POSTGRES_HOST")
+    port = os.getenv("port") or os.getenv("DB_PORT") or os.getenv("POSTGRES_PORT", "5432")
+    dbname = os.getenv("dbname") or os.getenv("DB_NAME") or os.getenv("POSTGRES_DB")
+    
+    if user and password and host and dbname:
+        return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    
+    # Method 3: DATABASE_URL environment variable
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        return db_url
+    
+    # Method 4: Default local database
+    return "postgresql://user:password@localhost:5432/hourtracking"
 
 def test_db_connection():
     """Test database connection and return (success, error_message)."""
@@ -27,12 +62,21 @@ def test_db_connection():
         error_str = str(e)
         if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
             return False, (
-                "❌ Cannot resolve database hostname. This usually means:\n"
-                "1. Your Supabase project is paused (free tier pauses after 7 days of inactivity)\n"
+                "❌ Cannot resolve database hostname. This usually means:\n\n"
+                "**Possible causes:**\n"
+                "1. **Supabase project is paused** (free tier pauses after 7 days of inactivity)\n"
                 "   → Go to https://supabase.com/dashboard and resume your project\n"
-                "2. Network connectivity issues\n"
-                "3. Incorrect hostname in connection string\n\n"
-                f"Error: {error_str}"
+                "   → Wait a few minutes after resuming for DNS to propagate\n\n"
+                "2. **Network/DNS issues**\n"
+                "   → Check your internet connection\n"
+                "   → Try: `nslookup db.vbnqnnixrwcmxukzjdrd.supabase.co`\n"
+                "   → DNS may need time to propagate if project was just resumed\n\n"
+                "3. **Connection string format**\n"
+                "   → Verify the hostname in `.streamlit/secrets.toml`\n"
+                "   → Check if you need to use connection pooling (port 6543 instead of 5432)\n\n"
+                f"**Error details:** {error_str}\n\n"
+                "**Quick test:** Try accessing your project dashboard:\n"
+                "https://vbnqnnixrwcmxukzjdrd.supabase.co"
             )
         elif "password authentication failed" in error_str:
             return False, f"❌ Database authentication failed. Check your password in .streamlit/secrets.toml\nError: {error_str}"
