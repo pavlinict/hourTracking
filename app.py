@@ -146,21 +146,25 @@ with tab1:
                 # Columns: Days (1..31)
                 
                 # Initialize
-                # Load holidays once for this month
+                # Load holidays and vacation days once for this month
                 holidays = utils.load_holidays()
+                vacation_days = utils.load_vacation_days()
                 
                 matrix_data = {}
                 for d in days:
-                    # Check weekend and holidays
+                    # Check weekend, holidays, and vacation days
                     curr_date = date(selected_year, month_num, d)
                     is_weekend = curr_date.weekday() >= 5 # 5=Sat, 6=Sun
                     is_holiday = curr_date in holidays
+                    is_vacation = curr_date in vacation_days
                     
-                    # Determine default value
+                    # Determine default value (priority: weekend > holiday > vacation)
                     if is_weekend:
                         default_val = "/"
                     elif is_holiday:
                         default_val = "F"
+                    elif is_vacation:
+                        default_val = "U"
                     else:
                         default_val = None
                     
@@ -457,20 +461,26 @@ with tab4:
     
     st.divider()
     
-    # Display holidays for selected year with delete functionality
+    # Display holidays for selected year with edit and delete functionality
     st.write(f"### Feiertage {holiday_year}")
     h_df = utils.get_holidays_df(year=holiday_year)
     
     if not h_df.empty:
-        # Display holidays with delete buttons
+        # Display holidays with editable names and delete buttons
         for idx, row in h_df.iterrows():
-            col1, col2, col3 = st.columns([2, 3, 1])
+            col1, col2, col3, col4 = st.columns([2, 4, 1, 1])
             with col1:
                 st.write(f"**{row['Datum']}**")
             with col2:
-                st.write(row['Name'])
+                # Editable name field
+                new_name = st.text_input("Name", value=row['Name'], key=f"h_edit_{row['Datum']}", label_visibility="collapsed")
+                if new_name != row['Name']:
+                    utils.update_holiday(row['Datum'], new_name)
             with col3:
-                if st.button("🗑️", key=f"del_{row['Datum']}", help="Löschen"):
+                if st.button("�", key=f"save_h_{row['Datum']}", help="Änderungen speichern"):
+                    st.rerun()
+            with col4:
+                if st.button("�🗑️", key=f"del_h_{row['Datum']}", help="Löschen"):
                     if utils.delete_holiday(row['Datum']):
                         st.success("Gelöscht!")
                         st.rerun()
@@ -488,12 +498,72 @@ with tab4:
     with col2:
         st.write("")
         st.write("")
-        if st.button("➕ Hinzufügen", use_container_width=True):
+        if st.button("➕ Hinzufügen", use_container_width=True, key="add_holiday_btn"):
             if h_name:
                 if utils.save_holiday(h_date, h_name):
                     st.success("Gespeichert!")
                     st.rerun()
                 else:
                     st.info("Feiertag existiert bereits.")
+            else:
+                st.error("Bitte Name eingeben.")
+    
+    st.divider()
+    st.divider()
+    
+    # === VACATION DAYS MANAGEMENT ===
+    st.subheader("Urlaubstage verwalten")
+    st.write("Urlaubstage gelten für ALLE Mitarbeiter (werden mit 'U' vorgefüllt)")
+    
+    # Year selector for vacation days
+    st.write("### Jahr auswählen")
+    vacation_year = st.selectbox("Jahr für Urlaubstage", 
+                                  available_years,
+                                  key="vacation_year")
+    
+    # Display vacation days for selected year
+    st.write(f"### Urlaubstage {vacation_year}")
+    v_df = utils.get_vacation_days_df(year=vacation_year)
+    
+    if not v_df.empty:
+        # Display vacation days with editable names and delete buttons
+        for idx, row in v_df.iterrows():
+            col1, col2, col3, col4 = st.columns([2, 4, 1, 1])
+            with col1:
+                st.write(f"**{row['Datum']}**")
+            with col2:
+                # Editable name field
+                new_name = st.text_input("Name", value=row['Name'], key=f"v_edit_{row['Datum']}", label_visibility="collapsed")
+                if new_name != row['Name']:
+                    utils.update_vacation_day(row['Datum'], new_name)
+            with col3:
+                if st.button("💾", key=f"save_v_{row['Datum']}", help="Änderungen speichern"):
+                    st.rerun()
+            with col4:
+                if st.button("🗑️", key=f"del_v_{row['Datum']}", help="Löschen"):
+                    if utils.delete_vacation_day(row['Datum']):
+                        st.success("Gelöscht!")
+                        st.rerun()
+    else:
+        st.info(f"Keine Urlaubstage für {vacation_year} gespeichert.")
+    
+    st.divider()
+    
+    # Manual vacation day entry
+    st.write("### Neuer Urlaubstag")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        v_date = st.date_input("Datum", date(vacation_year, 1, 1), key="new_vacation_date")
+        v_name = st.text_input("Name", key="new_vacation_name", placeholder="z.B. Betriebsurlaub")
+    with col2:
+        st.write("")
+        st.write("")
+        if st.button("➕ Hinzufügen", use_container_width=True, key="add_vacation_btn"):
+            if v_name:
+                if utils.save_vacation_day(v_date, v_name):
+                    st.success("Gespeichert!")
+                    st.rerun()
+                else:
+                    st.info("Urlaubstag existiert bereits.")
             else:
                 st.error("Bitte Name eingeben.")

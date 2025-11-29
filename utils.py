@@ -65,6 +65,14 @@ def init_db():
                     name TEXT
                 )
             """))
+            
+            # 5. Create Vacation Days table (company-wide vacation days)
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS vacation_days (
+                    datum DATE PRIMARY KEY,
+                    name TEXT
+                )
+            """))
             conn.commit()
             
             # 4. Auto-migration: Populate employees/projects from entries if empty
@@ -399,6 +407,14 @@ def load_holidays():
     except:
         return []
 
+def load_vacation_days():
+    """Loads vacation days."""
+    try:
+        df = pd.read_sql("SELECT datum FROM vacation_days", engine)
+        return pd.to_datetime(df['datum']).dt.date.tolist()
+    except:
+        return []
+
 def get_holidays_df(year=None):
     """Returns holidays as a DataFrame, optionally filtered by year."""
     try:
@@ -412,6 +428,19 @@ def get_holidays_df(year=None):
     except:
         return pd.DataFrame(columns=['Datum', 'Name'])
 
+def get_vacation_days_df(year=None):
+    """Returns vacation days as a DataFrame, optionally filtered by year."""
+    try:
+        if year:
+            query = "SELECT datum, name FROM vacation_days WHERE EXTRACT(YEAR FROM datum) = :year ORDER BY datum"
+            df = pd.read_sql(text(query), engine, params={"year": year})
+            df.columns = ['Datum', 'Name']
+            return df
+        else:
+            return pd.read_sql("SELECT datum as Datum, name as Name FROM vacation_days ORDER BY datum", engine)
+    except:
+        return pd.DataFrame(columns=['Datum', 'Name'])
+
 def delete_holiday(datum):
     """Deletes a holiday by date."""
     try:
@@ -421,6 +450,41 @@ def delete_holiday(datum):
             return True
     except Exception as e:
         print(f"Error deleting holiday: {e}")
+        return False
+
+def delete_vacation_day(datum):
+    """Deletes a vacation day by date."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM vacation_days WHERE datum = :datum"), {"datum": datum})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error deleting vacation day: {e}")
+        return False
+
+def update_holiday(datum, new_name):
+    """Updates a holiday name."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE holidays SET name = :name WHERE datum = :datum"), 
+                        {"name": new_name, "datum": datum})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error updating holiday: {e}")
+        return False
+
+def update_vacation_day(datum, new_name):
+    """Updates a vacation day name."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE vacation_days SET name = :name WHERE datum = :datum"), 
+                        {"name": new_name, "datum": datum})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error updating vacation day: {e}")
         return False
 
 def save_holiday(datum, name):
@@ -437,6 +501,22 @@ def save_holiday(datum, name):
             return False
     except Exception as e:
         print(f"Error saving holiday: {e}")
+        return False
+
+def save_vacation_day(datum, name):
+    """Saves a vacation day."""
+    try:
+        with engine.connect() as conn:
+            # Check if exists
+            res = conn.execute(text("SELECT 1 FROM vacation_days WHERE datum = :datum"), {"datum": datum}).fetchone()
+            if not res:
+                conn.execute(text("INSERT INTO vacation_days (datum, name) VALUES (:datum, :name)"), 
+                             {"datum": datum, "name": name})
+                conn.commit()
+                return True
+            return False
+    except Exception as e:
+        print(f"Error saving vacation day: {e}")
         return False
 
 def populate_german_holidays(year):
