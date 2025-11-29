@@ -176,11 +176,33 @@ with tab1:
                             df_matrix.at[proj, d] = val
 
                 # Display Editor
+                # Calculate Row Totals (Project Totals)
+                def calculate_row_total(row):
+                    total = 0.0
+                    for val in row:
+                        try:
+                            if val and str(val).strip() != "" and str(val).lower() != 'nan':
+                                total += float(str(val).replace(',', '.'))
+                        except:
+                            pass
+                    return total
+
+                # Add Gesamt column for display
+                df_display = df_matrix.copy()
+                df_display['Gesamt'] = df_display.apply(calculate_row_total, axis=1)
+                
+                # Add "Gesamt" Row (Grand Total of the "Gesamt" column)
+                grand_total = df_display['Gesamt'].sum()
+                
+                # Display Grand Total as a Metric above or below
+                st.metric("Gesamtstunden (Monat)", f"{grand_total:.2f}")
+
                 edited_matrix = st.data_editor(
-                    df_matrix,
+                    df_display,
                     use_container_width=True,
                     key=f"editor_{month_num}",
-                    num_rows="fixed" # Prevent adding/deleting rows
+                    num_rows="fixed", # Prevent adding/deleting rows
+                    disabled=["Gesamt"] # Make Total column read-only
                 )
                 
                 col_add, col_save = st.columns([2, 1])
@@ -190,9 +212,14 @@ with tab1:
                     if st.button("💾 Monat speichern", type="primary", key=f"btn_save_{month_num}"):
                         # Pre-save Validation
                         validation_error = False
+                        # Use the original df_matrix structure for validation logic, but get values from edited_matrix
+                        # We need to ignore 'Gesamt' column
+                        
                         for proj in edited_matrix.index:
-                            for day_col in edited_matrix.columns:
-                                val = edited_matrix.at[proj, day_col]
+                            for col in edited_matrix.columns:
+                                if col == "Gesamt": continue # Skip Total Column
+                                
+                                val = edited_matrix.at[proj, col]
                                 if val is not None and str(val).strip() != "" and str(val).lower() != 'nan':
                                     # Check if valid
                                     is_valid = False
@@ -206,11 +233,14 @@ with tab1:
                                             is_valid = True
                                     
                                     if not is_valid:
-                                        st.error(f"Ungültiger Wert '{val}' bei {proj} am {day_col}. Erlaubt: Zahlen, U, KK, F.")
+                                        st.error(f"Ungültiger Wert '{val}' bei {proj} am {col}. Erlaubt: Zahlen, U, KK, F.")
                                         validation_error = True
                         
                         if not validation_error:
-                            if utils.save_matrix_entries(selected_emp_filter, selected_year, month_num, edited_matrix):
+                            # Drop 'Gesamt' row and column before saving
+                            # We use errors='ignore' just in case
+                            to_save = edited_matrix.drop(index=['Gesamt'], columns=['Gesamt'], errors='ignore')
+                            if utils.save_matrix_entries(selected_emp_filter, selected_year, month_num, to_save):
                                 st.success("Gespeichert!")
                                 st.rerun()
                             else:
