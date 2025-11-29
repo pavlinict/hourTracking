@@ -57,6 +57,14 @@ def init_db():
                     PRIMARY KEY (employee, project)
                 )
             """))
+            
+            # 4. Create Holidays table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS holidays (
+                    datum DATE PRIMARY KEY,
+                    name TEXT
+                )
+            """))
             conn.commit()
             
             # 4. Auto-migration: Populate employees/projects from entries if empty
@@ -391,12 +399,29 @@ def load_holidays():
     except:
         return []
 
-def get_holidays_df():
-    """Returns holidays as a DataFrame."""
+def get_holidays_df(year=None):
+    """Returns holidays as a DataFrame, optionally filtered by year."""
     try:
-        return pd.read_sql("SELECT datum as Datum, name as Name FROM holidays ORDER BY datum", engine)
+        if year:
+            query = "SELECT datum, name FROM holidays WHERE EXTRACT(YEAR FROM datum) = :year ORDER BY datum"
+            df = pd.read_sql(text(query), engine, params={"year": year})
+            df.columns = ['Datum', 'Name']  # Rename columns
+            return df
+        else:
+            return pd.read_sql("SELECT datum as Datum, name as Name FROM holidays ORDER BY datum", engine)
     except:
         return pd.DataFrame(columns=['Datum', 'Name'])
+
+def delete_holiday(datum):
+    """Deletes a holiday by date."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM holidays WHERE datum = :datum"), {"datum": datum})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error deleting holiday: {e}")
+        return False
 
 def save_holiday(datum, name):
     """Saves a holiday."""
@@ -408,8 +433,32 @@ def save_holiday(datum, name):
                 conn.execute(text("INSERT INTO holidays (datum, name) VALUES (:datum, :name)"), 
                              {"datum": datum, "name": name})
                 conn.commit()
+                return True
+            return False
     except Exception as e:
         print(f"Error saving holiday: {e}")
+        return False
+
+def populate_german_holidays(year):
+    """
+    Auto-populates German holidays for Thuringia for the given year.
+    Returns tuple: (count, error_message)
+    """
+    try:
+        from workalendar.europe import Thuringia
+        cal = Thuringia()
+        holidays = cal.holidays(year)
+        
+        count = 0
+        for holiday_date, holiday_name in holidays:
+            if save_holiday(holiday_date, holiday_name):
+                count += 1
+        
+        return (count, None)
+    except ImportError as e:
+        return (0, "workalendar library not installed. Will be available after deployment to Streamlit Cloud.")
+    except Exception as e:
+        return (0, f"Error: {str(e)}")
 
 def generate_pdf_report(year, filename):
     """Generates a PDF report for the given year."""

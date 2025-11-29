@@ -24,8 +24,20 @@ with tab1:
     
     with col_filter1:
         current_year = date.today().year
-        years = sorted(list(set(df['datum'].apply(lambda x: x.year).unique().tolist() + [current_year])), reverse=True)
-        selected_year = st.selectbox("Jahr", years)
+        # Always include current year and next year, plus any years from existing data
+        data_years = df['datum'].apply(lambda x: x.year).unique().tolist() if not df.empty else []
+        all_years = sorted(list(set(data_years + [current_year, current_year + 1])), reverse=True)
+        
+        # Add option to manually enter a year
+        col_year1, col_year2 = st.columns([3, 1])
+        with col_year1:
+            selected_year = st.selectbox("Jahr", all_years, key="main_year_select")
+        with col_year2:
+            st.write("")  # Spacer
+            custom_year = st.number_input("Oder Jahr eingeben:", min_value=2020, max_value=2100, value=current_year, step=1, key="custom_year", label_visibility="collapsed")
+            if custom_year not in all_years and st.button("➕", help="Jahr hinzufügen"):
+                selected_year = custom_year
+                st.rerun()
         
     with col_filter2:
         employees = utils.get_employees()
@@ -144,12 +156,23 @@ with tab1:
                 # Columns: Days (1..31)
                 
                 # Initialize
+                # Load holidays once for this month
+                holidays = utils.load_holidays()
+                
                 matrix_data = {}
                 for d in days:
-                    # Check weekend
+                    # Check weekend and holidays
                     curr_date = date(selected_year, month_num, d)
                     is_weekend = curr_date.weekday() >= 5 # 5=Sat, 6=Sun
-                    default_val = "/" if is_weekend else None
+                    is_holiday = curr_date in holidays
+                    
+                    # Determine default value
+                    if is_weekend:
+                        default_val = "/"
+                    elif is_holiday:
+                        default_val = "F"
+                    else:
+                        default_val = None
                     
                     # Only use assigned projects
                     matrix_data[d] = [default_val]*len(assigned_projects)
@@ -171,9 +194,12 @@ with tab1:
                         else:
                             val = row['typ'] # Code
                         
-                        # If project exists in index
+                        # If project exists in index, update the cell
+                        # But preserve holiday/weekend defaults if the DB value is None/empty
                         if proj in df_matrix.index:
-                            df_matrix.at[proj, d] = val
+                            # Only overwrite if we have actual data, not None
+                            if val is not None and str(val).strip() != "" and str(val).lower() != 'nan':
+                                df_matrix.at[proj, d] = val
 
                 # Display Editor
                 # Calculate Row Totals (Project Totals)
@@ -388,21 +414,66 @@ with tab4:
     st.header("Einstellungen")
     st.subheader("Feiertage verwalten")
     
-    col1, col2 = st.columns(2)
+    # Year selector for holiday management
+    st.write("### Jahr auswählen")
+    holiday_year = st.selectbox("Jahr für Feiertage", 
+                                 [2024, 2025, 2026, 2027, 2028],
+                                 index=1,
+                                 key="holiday_year")
+    
+    col_actions = st.columns([1, 1])
+    
+    # Auto-generate holidays
+    with col_actions[0]:
+        if st.button("🇩🇪 Feiertage generieren", type="primary", use_container_width=True):
+            count, error = utils.populate_german_holidays(holiday_year)
+            if error:
+                st.error(error)
+            elif count > 0:
+                st.success(f"{count} Feiertage hinzugefügt!")
+                st.rerun()
+            else:
+                st.info(f"Alle Feiertage für {holiday_year} bereits vorhanden.")
+    
+    st.divider()
+    
+    # Display holidays for selected year with delete functionality
+    st.write(f"### Feiertage {holiday_year}")
+    h_df = utils.get_holidays_df(year=holiday_year)
+    
+    if not h_df.empty:
+        # Display holidays with delete buttons
+        for idx, row in h_df.iterrows():
+            col1, col2, col3 = st.columns([2, 3, 1])
+            with col1:
+                st.write(f"**{row['Datum']}**")
+            with col2:
+                st.write(row['Name'])
+            with col3:
+                if st.button("🗑️", key=f"del_{row['Datum']}", help="Löschen"):
+                    if utils.delete_holiday(row['Datum']):
+                        st.success("Gelöscht!")
+                        st.rerun()
+    else:
+        st.info(f"Keine Feiertage für {holiday_year} gespeichert.")
+    
+    st.divider()
+    
+    # Manual holiday entry
+    st.write("### Neuer Feiertag")
+    col1, col2 = st.columns([2, 1])
     with col1:
-        h_date = st.date_input("Datum Feiertag", date.today())
-        h_name = st.text_input("Name des Feiertags")
-        if st.button("Feiertag speichern"):
+        h_date = st.date_input("Datum", date(holiday_year, 1, 1), key="new_holiday_date")
+        h_name = st.text_input("Name", key="new_holiday_name")
+    with col2:
+        st.write("")
+        st.write("")
+        if st.button("➕ Hinzufügen", use_container_width=True):
             if h_name:
-                utils.save_holiday(h_date, h_name)
-                st.success(f"Feiertag '{h_name}' gespeichert.")
+                if utils.save_holiday(h_date, h_name):
+                    st.success("Gespeichert!")
+                    st.rerun()
+                else:
+                    st.info("Feiertag existiert bereits.")
             else:
                 st.error("Bitte Name eingeben.")
-                
-    with col2:
-        st.write("Gespeicherte Feiertage:")
-        h_df = utils.get_holidays_df()
-        if not h_df.empty:
-            st.dataframe(h_df)
-        else:
-            st.info("Keine Feiertage gespeichert.")
