@@ -8,6 +8,15 @@ st.set_page_config(page_title="Stundenerfassung", layout="wide")
 
 st.title("⏱️ Stundenerfassung")
 
+# Check database connection
+db_success, db_error = utils.test_db_connection()
+if not db_success:
+    st.error(db_error)
+    st.info("💡 **Quick Fix Options:**\n"
+            "1. **If using Supabase:** Go to https://supabase.com/dashboard and resume your paused project\n"
+            "2. **To use local database:** Comment out the Supabase line in `.streamlit/secrets.toml` and uncomment the local database line, then run `docker-compose up -d`")
+    st.stop()
+
 # Tabs
 tab1, tab2, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Einstellungen"])
 

@@ -8,21 +8,100 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy import create_engine, text
 import streamlit as st
 
+# Try to load dotenv if available (for .env file support)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, that's okay
+
 # Database Connection
 def get_db_url():
+    """
+    Get database URL from multiple sources (priority order):
+    1. Streamlit secrets (db_url) - Recommended for Streamlit apps
+    2. Individual environment variables (for .env file support)
+    3. DATABASE_URL environment variable
+    4. Default local database
+    
+    According to Streamlit docs: https://docs.streamlit.io/develop/concepts/connections/secrets-management
+    """
+    # Method 1: Streamlit secrets (recommended for Streamlit apps)
     try:
-        if "db_url" in st.secrets:
+        if hasattr(st, 'secrets') and "db_url" in st.secrets:
             return st.secrets["db_url"]
-    except FileNotFoundError:
-        pass # No secrets file
-    return os.environ.get("DATABASE_URL", "postgresql://user:password@localhost:5432/hourtracking")
+    except (FileNotFoundError, AttributeError, RuntimeError):
+        pass  # No secrets file, not in Streamlit context, or secrets not loaded
+    
+    # Method 2: Individual environment variables (like .env file)
+    # Useful for local development or non-Streamlit environments
+    user = os.getenv("user") or os.getenv("DB_USER") or os.getenv("POSTGRES_USER")
+    password = os.getenv("password") or os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD")
+    host = os.getenv("host") or os.getenv("DB_HOST") or os.getenv("POSTGRES_HOST")
+    port = os.getenv("port") or os.getenv("DB_PORT") or os.getenv("POSTGRES_PORT", "5432")
+    dbname = os.getenv("dbname") or os.getenv("DB_NAME") or os.getenv("POSTGRES_DB")
+    
+    if user and password and host and dbname:
+        return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    
+    # Method 3: DATABASE_URL environment variable
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        return db_url
+    
+    # Method 4: Default local database
+    return "postgresql://user:password@localhost:5432/hourtracking"
+
+def test_db_connection():
+    """Test database connection and return (success, error_message)."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, None
+    except Exception as e:
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            return False, (
+                "❌ Cannot resolve database hostname. This usually means:\n\n"
+                "**Possible causes:**\n"
+                "1. **Supabase project is paused** (free tier pauses after 7 days of inactivity)\n"
+                "   → Go to https://supabase.com/dashboard and resume your project\n"
+                "   → Wait a few minutes after resuming for DNS to propagate\n\n"
+                "2. **Network/DNS issues**\n"
+                "   → Check your internet connection\n"
+                "   → Try: `nslookup db.vbnqnnixrwcmxukzjdrd.supabase.co`\n"
+                "   → DNS may need time to propagate if project was just resumed\n\n"
+                "3. **Connection string format**\n"
+                "   → Verify the hostname in `.streamlit/secrets.toml`\n"
+                "   → Check if you need to use connection pooling (port 6543 instead of 5432)\n\n"
+                f"**Error details:** {error_str}\n\n"
+                "**Quick test:** Try accessing your project dashboard:\n"
+                "https://vbnqnnixrwcmxukzjdrd.supabase.co"
+            )
+        elif "password authentication failed" in error_str:
+            return False, f"❌ Database authentication failed. Check your password in .streamlit/secrets.toml\nError: {error_str}"
+        elif "Connection refused" in error_str or "could not connect" in error_str:
+            return False, (
+                f"❌ Cannot connect to database server.\n"
+                "If using local Docker: Make sure Docker is running and the database container is started:\n"
+                "  docker-compose up -d\n\n"
+                f"Error: {error_str}"
+            )
+        else:
+            return False, f"❌ Database connection error: {error_str}"
 
 DB_URL = get_db_url()
-engine = create_engine(DB_URL)
+engine = create_engine(DB_URL, pool_pre_ping=True, connect_args={"connect_timeout": 10})
 
 def init_db():
     """Initializes the database tables."""
     try:
+        # Test connection first
+        success, error_msg = test_db_connection()
+        if not success:
+            print(f"DB Init Error: {error_msg}")
+            return False
+        
         with engine.connect() as conn:
             # 1. Create referenced tables first (Employees & Projects)
             conn.execute(text("""
@@ -137,8 +216,14 @@ def init_db():
                 conn.commit()
             except Exception:
                 conn.rollback() # Constraint likely exists or data violation
+        return True
     except Exception as e:
-        print(f"DB Init Error: {e}")
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            print(f"DB Init Error: Cannot resolve database hostname. Your Supabase project may be paused. Go to https://supabase.com/dashboard to resume it.")
+        else:
+            print(f"DB Init Error: {e}")
+        return False
 
 # Initialize on module load (or call explicitly)
 init_db()
@@ -146,9 +231,26 @@ init_db()
 def load_data():
     """Loads data from the DB."""
     try:
+        # Test connection first
+        success, error_msg = test_db_connection()
+        if not success:
+            if st and hasattr(st, 'error'):
+                st.error(error_msg)
+            print(f"Error loading data: {error_msg}")
+            return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
+        
         return pd.read_sql("SELECT * FROM entries", engine)
     except Exception as e:
-        print(f"Error loading data: {e}")
+        error_str = str(e)
+        if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
+            msg = "Cannot resolve database hostname. Your Supabase project may be paused. Go to https://supabase.com/dashboard to resume it."
+            if st and hasattr(st, 'error'):
+                st.error(msg)
+            print(f"Error loading data: {msg}")
+        else:
+            if st and hasattr(st, 'error'):
+                st.error(f"Error loading data: {e}")
+            print(f"Error loading data: {e}")
         return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
 
 def save_entry(datum, mitarbeiter, projekt, stunden, beschreibung, typ):
