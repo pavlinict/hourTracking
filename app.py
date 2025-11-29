@@ -418,26 +418,51 @@ with tab4:
     
     # Year Management Section
     st.subheader("Jahre verwalten")
-    st.write("Jahre für die Jahresansicht hinzufügen (z.B. zukünftige Jahre)")
     
-    col_year1, col_year2 = st.columns([3, 1])
-    with col_year1:
-        new_year = st.number_input("Neues Jahr", min_value=2020, max_value=2100, value=date.today().year + 1, step=1, key="new_year_input")
-    with col_year2:
-        st.write("")
-        if st.button("➕ Jahr hinzufügen", use_container_width=True):
-            # Ensure System employee and Platzhalter project exist
-            utils.save_employee("System")
-            utils.add_project("Platzhalter")
-            
-            # Create a dummy entry to make the year appear in the list
-            dummy_date = date(new_year, 1, 1)
-            success = utils.save_entry(dummy_date, "System", "Platzhalter", 0.0, f"Jahr {new_year} aktiviert", "System")
-            if success:
-                st.success(f"Jahr {new_year} hinzugefügt!")
-                st.rerun()
+    # Display current years
+    current_year = date.today().year
+    data_years = df['datum'].apply(lambda x: x.year).unique().tolist() if not df.empty else []
+    available_years = sorted(list(set(data_years + [current_year, current_year + 1])), reverse=True)
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.write("**Verfügbare Jahre:**")
+        if available_years:
+            years_display = ", ".join([str(year) for year in available_years])
+            st.markdown(years_display)
+        else:
+            st.info("Keine Jahre verfügbar")
+    
+    with col2:
+        new_year = st.number_input("Neues Jahr", min_value=2020, max_value=2100, value=current_year + 1, step=1, key="new_year_input", label_visibility="collapsed")
+        
+        # Check if year already exists
+        year_exists = new_year in available_years
+        
+        if year_exists:
+            st.warning(f"⚠️ Jahr {new_year} existiert bereits!")
+            button_disabled = True
+        else:
+            button_disabled = False
+        
+        if st.button("➕ Jahr hinzufügen", use_container_width=True, disabled=button_disabled):
+            # Double-check that year doesn't exist (in case data changed)
+            if new_year in available_years:
+                st.error(f"Jahr {new_year} existiert bereits und kann nicht hinzugefügt werden.")
             else:
-                st.error("Fehler beim Hinzufügen des Jahres.")
+                # Ensure System employee and Platzhalter project exist
+                utils.save_employee("System")
+                utils.add_project("Platzhalter")
+                
+                # Create a dummy entry to make the year appear in the list
+                dummy_date = date(new_year, 1, 1)
+                success = utils.save_entry(dummy_date, "System", "Platzhalter", 0.0, f"Jahr {new_year} aktiviert", "System")
+                if success:
+                    st.success(f"Jahr {new_year} hinzugefügt!")
+                    st.rerun()
+                else:
+                    st.error("Fehler beim Hinzufügen des Jahres.")
     
     st.divider()
     

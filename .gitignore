@@ -2,3 +2,7 @@
 __pycache__
 .env
 .streamlit/secrets.toml
+*.csv
+*.toml
+!.streamlit/secrets.toml.example
+*.pyc
