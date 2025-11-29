@@ -9,7 +9,7 @@ st.set_page_config(page_title="Stundenerfassung", layout="wide")
 st.title("⏱️ Stundenerfassung")
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Berichte", "Einstellungen"])
+tab1, tab2, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Einstellungen"])
 
 # --- Tab 1: Übersicht (Matrix View) ---
 with tab1:
@@ -27,17 +27,7 @@ with tab1:
         # Always include current year and next year, plus any years from existing data
         data_years = df['datum'].apply(lambda x: x.year).unique().tolist() if not df.empty else []
         all_years = sorted(list(set(data_years + [current_year, current_year + 1])), reverse=True)
-        
-        # Add option to manually enter a year
-        col_year1, col_year2 = st.columns([3, 1])
-        with col_year1:
-            selected_year = st.selectbox("Jahr", all_years, key="main_year_select")
-        with col_year2:
-            st.write("")  # Spacer
-            custom_year = st.number_input("Oder Jahr eingeben:", min_value=2020, max_value=2100, value=current_year, step=1, key="custom_year", label_visibility="collapsed")
-            if custom_year not in all_years and st.button("➕", help="Jahr hinzufügen"):
-                selected_year = custom_year
-                st.rerun()
+        selected_year = st.selectbox("Jahr", all_years)
         
     with col_filter2:
         employees = utils.get_employees()
@@ -371,54 +361,84 @@ with tab2:
                 st.info("Bitte erst Mitarbeiter anlegen.")
 
 # --- Tab 3: Berichte ---
-with tab3:
-    st.header("Berichte exportieren")
+# with tab3:
+#     st.header("Berichte exportieren")
     
-    df = utils.load_data()
-    if not df.empty:
-        df['datum'] = pd.to_datetime(df['datum'])
-        years = sorted(df['datum'].dt.year.unique(), reverse=True)
-        report_year = st.selectbox("Jahr für Bericht", years, key="report_year")
+#     df = utils.load_data()
+#     if not df.empty:
+#         df['datum'] = pd.to_datetime(df['datum'])
+#         years = sorted(df['datum'].dt.year.unique(), reverse=True)
+#         report_year = st.selectbox("Jahr für Bericht", years, key="report_year")
         
-        col1, col2 = st.columns(2)
+#         col1, col2 = st.columns(2)
         
-        with col1:
-            # CSV Download
-            csv_data = df[df['datum'].dt.year == report_year].to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label=f"📄 Download CSV {report_year}",
-                data=csv_data,
-                file_name=f"{report_year}_stunden.csv",
-                mime='text/csv',
-            )
+#         with col1:
+#             # CSV Download
+#             csv_data = df[df['datum'].dt.year == report_year].to_csv(index=False).encode('utf-8')
+#             st.download_button(
+#                 label=f"📄 Download CSV {report_year}",
+#                 data=csv_data,
+#                 file_name=f"{report_year}_stunden.csv",
+#                 mime='text/csv',
+#             )
             
-        with col2:
-            # PDF Generation
-            if st.button(f"📄 Generiere PDF {report_year}"):
-                filename = f"{report_year}_bericht.pdf"
-                if utils.generate_pdf_report(report_year, filename):
-                    with open(filename, "rb") as pdf_file:
-                        st.download_button(
-                            label="Download PDF",
-                            data=pdf_file,
-                            file_name=filename,
-                            mime="application/pdf"
-                        )
-                else:
-                    st.error("Fehler beim Generieren des PDFs oder keine Daten.")
-    else:
-        st.info("Keine Daten verfügbar.")
+#         with col2:
+#             # PDF Generation
+#             if st.button(f"📄 Generiere PDF {report_year}"):
+#                 filename = f"{report_year}_bericht.pdf"
+#                 if utils.generate_pdf_report(report_year, filename):
+#                     with open(filename, "rb") as pdf_file:
+#                         st.download_button(
+#                             label="Download PDF",
+#                             data=pdf_file,
+#                             file_name=filename,
+#                             mime="application/pdf"
+#                         )
+#                 else:
+#                     st.error("Fehler beim Generieren des PDFs oder keine Daten.")
+#     else:
+#         st.info("Keine Daten verfügbar.")
 
 # --- Tab 4: Einstellungen (Feiertage) ---
 with tab4:
     st.header("Einstellungen")
+    
+    # Year Management Section
+    st.subheader("Jahre verwalten")
+    st.write("Jahre für die Jahresansicht hinzufügen (z.B. zukünftige Jahre)")
+    
+    col_year1, col_year2 = st.columns([3, 1])
+    with col_year1:
+        new_year = st.number_input("Neues Jahr", min_value=2020, max_value=2100, value=date.today().year + 1, step=1, key="new_year_input")
+    with col_year2:
+        st.write("")
+        if st.button("➕ Jahr hinzufügen", use_container_width=True):
+            # Ensure System employee and Platzhalter project exist
+            utils.save_employee("System")
+            utils.add_project("Platzhalter")
+            
+            # Create a dummy entry to make the year appear in the list
+            dummy_date = date(new_year, 1, 1)
+            success = utils.save_entry(dummy_date, "System", "Platzhalter", 0.0, f"Jahr {new_year} aktiviert", "System")
+            if success:
+                st.success(f"Jahr {new_year} hinzugefügt!")
+                st.rerun()
+            else:
+                st.error("Fehler beim Hinzufügen des Jahres.")
+    
+    st.divider()
+    
+    # Holiday Management
     st.subheader("Feiertage verwalten")
     
-    # Year selector for holiday management
+    # Year selector for holiday management - use same logic as main view
+    current_year = date.today().year
+    data_years = df['datum'].apply(lambda x: x.year).unique().tolist() if not df.empty else []
+    available_years = sorted(list(set(data_years + [current_year, current_year + 1])), reverse=True)
+    
     st.write("### Jahr auswählen")
     holiday_year = st.selectbox("Jahr für Feiertage", 
-                                 [2024, 2025, 2026, 2027, 2028],
-                                 index=1,
+                                 available_years,
                                  key="holiday_year")
     
     col_actions = st.columns([1, 1])
