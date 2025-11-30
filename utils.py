@@ -434,6 +434,8 @@ def remove_employee(name):
     """Removes an employee."""
     try:
         with engine.connect() as conn:
+            conn.execute(text("DELETE FROM entries WHERE mitarbeiter = :name"), {"name": name})
+            conn.execute(text("DELETE FROM employee_projects WHERE employee = :name"), {"name": name})
             conn.execute(text("DELETE FROM employees WHERE name = :name"), {"name": name})
             conn.commit()
             clear_cache()
@@ -482,11 +484,30 @@ def delete_project(name):
     """Deletes a project."""
     try:
         with engine.connect() as conn:
+            conn.execute(text("DELETE FROM entries WHERE projekt = :name"), {"name": name})
+            conn.execute(text("DELETE FROM employee_projects WHERE project = :name"), {"name": name})
             conn.execute(text("DELETE FROM projects WHERE name = :name"), {"name": name})
             conn.commit()
             clear_cache()
             return True
     except:
+        return False
+
+def rename_project(old_name, new_name):
+    """Renames a project everywhere."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE projects SET name = :new WHERE name = :old"), 
+                         {"new": new_name, "old": old_name})
+            conn.execute(text("UPDATE entries SET projekt = :new WHERE projekt = :old"), 
+                         {"new": new_name, "old": old_name})
+            conn.execute(text("UPDATE employee_projects SET project = :new WHERE project = :old"), 
+                         {"new": new_name, "old": old_name})
+            conn.commit()
+            clear_cache()
+            return True
+    except Exception as e:
+        print(f"Error renaming project: {e}")
         return False
 
 def cleanup_system_placeholders():

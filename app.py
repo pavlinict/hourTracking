@@ -304,40 +304,30 @@ with tab2:
             st.write("---")
             st.caption("Aktuelle Mitarbeiter")
             if employees:
-                st.dataframe(pd.DataFrame({"Name": employees}), use_container_width=True, hide_index=True)
+                for emp in employees:
+                    col_name, col_save, col_delete = st.columns([4, 2, 1])
+                    new_name = col_name.text_input("Name", value=emp, key=f"emp_edit_{emp}", label_visibility="collapsed")
+                    if col_save.button("Speichern", key=f"emp_save_{emp}"):
+                        if new_name.strip() and new_name.strip() != emp:
+                            utils.rename_employee(emp, new_name.strip())
+                            st.success(f"'{emp}' in '{new_name}' umbenannt.")
+                            st.rerun()
+                        else:
+                            st.warning("Bitte neuen Namen eingeben.")
+                    with col_delete.popover(f"🗑️ {emp}"):
+                        st.warning("Dieses Löschen entfernt alle Einträge dieses Mitarbeiters!")
+                        if st.button("Löschen bestätigen", key=f"emp_delete_confirm_{emp}", type="primary"):
+                            if utils.remove_employee(emp):
+                                st.success(f"Mitarbeiter '{emp}' und alle Einträge gelöscht.")
+                                st.rerun()
+                            else:
+                                st.error("Löschen fehlgeschlagen.")
             else:
                 st.info("Noch keine Mitarbeiter angelegt.")
                     
         with col2:
-            st.subheader("Bearbeiten / Löschen")
-            if employees:
-                selected_emp = st.selectbox("Mitarbeiter auswählen", employees, key="edit_employee_select")
-                
-                with st.form("rename_employee_form"):
-                    new_name = st.text_input("Neuer Name", value=selected_emp)
-                    rename_clicked = st.form_submit_button("Umbenennen")
-                if rename_clicked:
-                    if new_name and new_name != selected_emp:
-                        utils.rename_employee(selected_emp, new_name.strip())
-                        st.success(f"Umbenannt in '{new_name}'.")
-                        st.rerun()
-                    else:
-                        st.warning("Bitte einen anderen Namen eingeben.")
-                
-                with st.form("delete_employee_form"):
-                    confirm = st.checkbox("Ich möchte wirklich löschen", key="confirm_delete_emp")
-                    delete_clicked = st.form_submit_button("Mitarbeiter löschen", type="primary")
-                if delete_clicked:
-                    if confirm:
-                        if utils.remove_employee(selected_emp):
-                            st.success(f"Mitarbeiter '{selected_emp}' gelöscht.")
-                            st.rerun()
-                        else:
-                            st.error("Löschen fehlgeschlagen.")
-                    else:
-                        st.warning("Bitte zuerst bestätigen.")
-            else:
-                st.info("Keine Mitarbeiter vorhanden.")
+            st.subheader("Hinweis")
+            st.write("Bearbeite oder lösche Mitarbeiter direkt in der Liste. Änderungen werden sofort übernommen.")
 
     # Sub-Tab: Projekte & Zuweisung
     with tab2_2:
@@ -345,8 +335,8 @@ with tab2:
         
         with col_p1:
             st.subheader("Projekte verwalten")
-            # Add Project
             all_projects = utils.get_projects()
+            # Add Project
             with st.form("add_project_form"):
                 new_proj_name = st.text_input("Neues Projekt", placeholder="z. B. Kundenprojekt A")
                 add_project_clicked = st.form_submit_button("Projekt erstellen")
@@ -360,21 +350,30 @@ with tab2:
                 else:
                     st.error("Bitte einen Projektnamen eingeben.")
             
-            # List / Delete
+            # List / inline edit/delete
             st.write("---")
             st.caption("Aktuelle Projekte")
             if all_projects:
-                st.dataframe(pd.DataFrame({"Projekt": all_projects}), use_container_width=True, hide_index=True)
-                
-                with st.form("delete_project_form"):
-                    proj_to_delete = st.selectbox("Projekt löschen", all_projects, key="delete_project_select")
-                    delete_project_clicked = st.form_submit_button("Projekt löschen", type="primary")
-                if delete_project_clicked:
-                    if utils.delete_project(proj_to_delete):
-                        st.success(f"Projekt '{proj_to_delete}' gelöscht.")
-                        st.rerun()
-                    else:
-                        st.error("Löschen fehlgeschlagen.")
+                for proj in all_projects:
+                    col_proj_name, col_proj_save, col_proj_delete = st.columns([4, 2, 1])
+                    edited_proj = col_proj_name.text_input("Projektname", value=proj, key=f"proj_edit_{proj}", label_visibility="collapsed")
+                    if col_proj_save.button("Speichern", key=f"proj_save_{proj}"):
+                        if edited_proj.strip() and edited_proj.strip() != proj:
+                            if utils.rename_project(proj, edited_proj.strip()):
+                                st.success(f"Projekt '{proj}' in '{edited_proj}' umbenannt.")
+                                st.rerun()
+                            else:
+                                st.error("Umbenennen fehlgeschlagen.")
+                        else:
+                            st.warning("Bitte neuen Projektnamen eingeben.")
+                    with col_proj_delete.popover(f"🗑️ {proj}"):
+                        st.warning("Dieses Löschen entfernt alle Einträge für dieses Projekt!")
+                        if st.button("Projekt löschen", key=f"proj_delete_confirm_{proj}", type="primary"):
+                            if utils.delete_project(proj):
+                                st.success(f"Projekt '{proj}' und alle Einträge gelöscht.")
+                                st.rerun()
+                            else:
+                                st.error("Löschen fehlgeschlagen.")
             else:
                 st.info("Keine Projekte vorhanden.")
                 
