@@ -283,40 +283,59 @@ with tab2:
     
     # Sub-Tab: Mitarbeiter
     with tab2_1:
+        employees = utils.get_employees()
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Neuen Mitarbeiter anlegen")
-            new_emp = st.text_input("Name")
-            if st.button("Hinzufügen"):
+            with st.form("add_employee_form"):
+                new_emp = st.text_input("Name", placeholder="z. B. Max Mustermann")
+                add_clicked = st.form_submit_button("Hinzufügen")
+            if add_clicked:
                 if new_emp:
-                    if utils.save_employee(new_emp):
+                    if utils.save_employee(new_emp.strip()):
                         st.success(f"Mitarbeiter '{new_emp}' hinzugefügt.")
                         st.rerun()
                     else:
                         st.warning("Mitarbeiter existiert bereits.")
                 else:
                     st.error("Bitte Name eingeben.")
+            
+            st.write("---")
+            st.caption("Aktuelle Mitarbeiter")
+            if employees:
+                st.dataframe(pd.DataFrame({"Name": employees}), use_container_width=True, hide_index=True)
+            else:
+                st.info("Noch keine Mitarbeiter angelegt.")
                     
         with col2:
             st.subheader("Bearbeiten / Löschen")
-            employees = utils.get_employees()
             if employees:
-                selected_emp = st.selectbox("Mitarbeiter auswählen", employees)
+                selected_emp = st.selectbox("Mitarbeiter auswählen", employees, key="edit_employee_select")
                 
-                # Rename
-                new_name = st.text_input("Neuer Name", value=selected_emp)
-                if st.button("Umbenennen"):
+                with st.form("rename_employee_form"):
+                    new_name = st.text_input("Neuer Name", value=selected_emp)
+                    rename_clicked = st.form_submit_button("Umbenennen")
+                if rename_clicked:
                     if new_name and new_name != selected_emp:
-                        utils.rename_employee(selected_emp, new_name)
+                        utils.rename_employee(selected_emp, new_name.strip())
                         st.success(f"Umbenannt in '{new_name}'.")
                         st.rerun()
+                    else:
+                        st.warning("Bitte einen anderen Namen eingeben.")
                 
-                # Remove
-                if st.button("Löschen", type="primary"):
-                    if utils.remove_employee(selected_emp):
-                        st.success(f"Mitarbeiter '{selected_emp}' gelöscht.")
-                        st.rerun()
+                with st.form("delete_employee_form"):
+                    confirm = st.checkbox("Ich möchte wirklich löschen", key="confirm_delete_emp")
+                    delete_clicked = st.form_submit_button("Mitarbeiter löschen", type="primary")
+                if delete_clicked:
+                    if confirm:
+                        if utils.remove_employee(selected_emp):
+                            st.success(f"Mitarbeiter '{selected_emp}' gelöscht.")
+                            st.rerun()
+                        else:
+                            st.error("Löschen fehlgeschlagen.")
+                    else:
+                        st.warning("Bitte zuerst bestätigen.")
             else:
                 st.info("Keine Mitarbeiter vorhanden.")
 
@@ -327,26 +346,37 @@ with tab2:
         with col_p1:
             st.subheader("Projekte verwalten")
             # Add Project
-            new_proj_name = st.text_input("Neues Projekt")
-            if st.button("Projekt erstellen"):
+            all_projects = utils.get_projects()
+            with st.form("add_project_form"):
+                new_proj_name = st.text_input("Neues Projekt", placeholder="z. B. Kundenprojekt A")
+                add_project_clicked = st.form_submit_button("Projekt erstellen")
+            if add_project_clicked:
                 if new_proj_name:
-                    if utils.add_project(new_proj_name):
+                    if utils.add_project(new_proj_name.strip()):
                         st.success(f"Projekt '{new_proj_name}' erstellt.")
                         st.rerun()
                     else:
-                        st.error("Fehler beim Erstellen.")
+                        st.error("Projekt konnte nicht erstellt werden (ggf. bereits vorhanden).")
+                else:
+                    st.error("Bitte einen Projektnamen eingeben.")
             
             # List / Delete
             st.write("---")
-            all_projects = utils.get_projects()
+            st.caption("Aktuelle Projekte")
             if all_projects:
-                proj_to_delete = st.selectbox("Projekt löschen", all_projects)
-                if st.button("Projekt löschen", type="primary"):
+                st.dataframe(pd.DataFrame({"Projekt": all_projects}), use_container_width=True, hide_index=True)
+                
+                with st.form("delete_project_form"):
+                    proj_to_delete = st.selectbox("Projekt löschen", all_projects, key="delete_project_select")
+                    delete_project_clicked = st.form_submit_button("Projekt löschen", type="primary")
+                if delete_project_clicked:
                     if utils.delete_project(proj_to_delete):
-                        st.success("Gelöscht.")
+                        st.success(f"Projekt '{proj_to_delete}' gelöscht.")
                         st.rerun()
+                    else:
+                        st.error("Löschen fehlgeschlagen.")
             else:
-                st.info("Keine Projekte.")
+                st.info("Keine Projekte vorhanden.")
                 
         with col_p2:
             st.subheader("Projekt-Zuweisung")
