@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 from datetime import datetime, date
+from functools import lru_cache
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -228,6 +229,7 @@ def init_db():
 # Initialize on module load (or call explicitly)
 init_db()
 
+@lru_cache(maxsize=32)
 def load_data():
     """Loads data from the DB."""
     try:
@@ -239,7 +241,8 @@ def load_data():
             print(f"Error loading data: {error_msg}")
             return pd.DataFrame(columns=['datum', 'mitarbeiter', 'projekt', 'stunden', 'beschreibung', 'typ'])
         
-        return pd.read_sql("SELECT * FROM entries", engine)
+        df = pd.read_sql("SELECT * FROM entries", engine)
+        return df.copy()
     except Exception as e:
         error_str = str(e)
         if "could not translate host name" in error_str or "nodename nor servname provided" in error_str:
@@ -269,6 +272,7 @@ def save_entry(datum, mitarbeiter, projekt, stunden, beschreibung, typ):
                 "typ": typ
             })
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error saving entry: {e}")
@@ -292,6 +296,7 @@ def update_entry(id, datum, mitarbeiter, projekt, stunden, beschreibung, typ):
                 "typ": typ
             })
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error updating entry: {e}")
@@ -327,6 +332,7 @@ def save_month_entries(mitarbeiter, year, month, entries):
                 """), cleaned_entries)
             
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error saving month entries: {e}")
@@ -400,6 +406,7 @@ def save_matrix_entries(mitarbeiter, year, month, df_matrix):
             
     return save_month_entries(mitarbeiter, year, month, entries)
 
+@lru_cache(maxsize=32)
 def get_employees():
     """Returns a list of unique employees."""
     try:
@@ -417,6 +424,7 @@ def save_employee(name):
             if not res:
                 conn.execute(text("INSERT INTO employees (name) VALUES (:name)"), {"name": name})
                 conn.commit()
+                clear_cache()
                 return True
     except Exception as e:
         print(f"Error saving employee: {e}")
@@ -428,6 +436,7 @@ def remove_employee(name):
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM employees WHERE name = :name"), {"name": name})
             conn.commit()
+            clear_cache()
             return True
     except:
         return False
@@ -443,11 +452,13 @@ def rename_employee(old_name, new_name):
             conn.execute(text("UPDATE entries SET mitarbeiter = :new_name WHERE mitarbeiter = :old_name"), 
                          {"new_name": new_name, "old_name": old_name})
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error renaming: {e}")
         return False
 
+@lru_cache(maxsize=32)
 def get_projects():
     """Returns a list of all available projects."""
     try:
@@ -462,6 +473,7 @@ def add_project(name):
         with engine.connect() as conn:
             conn.execute(text("INSERT INTO projects (name) VALUES (:name) ON CONFLICT DO NOTHING"), {"name": name})
             conn.commit()
+            clear_cache()
             return True
     except:
         return False
@@ -472,6 +484,7 @@ def delete_project(name):
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM projects WHERE name = :name"), {"name": name})
             conn.commit()
+            clear_cache()
             return True
     except:
         return False
@@ -521,6 +534,7 @@ def cleanup_system_placeholders():
             conn.execute(text("DELETE FROM projects WHERE name = 'Platzhalter'"))
             
             conn.commit()
+            clear_cache()
             return True, f"System und Platzhalter erfolgreich entfernt ({count_before} Einträge gelöscht)", count_before
     except Exception as e:
         return False, f"Fehler beim Entfernen: {str(e)}", 0
@@ -545,27 +559,31 @@ def update_assigned_projects(employee, projects):
                 data = [{"emp": employee, "proj": p} for p in projects]
                 conn.execute(text("INSERT INTO employee_projects (employee, project) VALUES (:emp, :proj)"), data)
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error updating assignments: {e}")
         return False
 
+@lru_cache(maxsize=32)
 def load_holidays():
     """Loads holidays."""
     try:
         df = pd.read_sql("SELECT datum FROM holidays", engine)
-        return pd.to_datetime(df['datum']).dt.date.tolist()
+        return tuple(pd.to_datetime(df['datum']).dt.date.tolist())
     except:
         return []
 
+@lru_cache(maxsize=32)
 def load_vacation_days():
     """Loads vacation days."""
     try:
         df = pd.read_sql("SELECT datum FROM vacation_days", engine)
-        return pd.to_datetime(df['datum']).dt.date.tolist()
+        return tuple(pd.to_datetime(df['datum']).dt.date.tolist())
     except:
         return []
 
+@lru_cache(maxsize=32)
 def get_holidays_df(year=None):
     """Returns holidays as a DataFrame, optionally filtered by year."""
     try:
@@ -573,12 +591,14 @@ def get_holidays_df(year=None):
             query = "SELECT datum, name FROM holidays WHERE EXTRACT(YEAR FROM datum) = :year ORDER BY datum"
             df = pd.read_sql(text(query), engine, params={"year": year})
             df.columns = ['Datum', 'Name']  # Rename columns
-            return df
+            return df.copy()
         else:
-            return pd.read_sql("SELECT datum as Datum, name as Name FROM holidays ORDER BY datum", engine)
+            df = pd.read_sql("SELECT datum as Datum, name as Name FROM holidays ORDER BY datum", engine)
+            return df.copy()
     except:
         return pd.DataFrame(columns=['Datum', 'Name'])
 
+@lru_cache(maxsize=32)
 def get_vacation_days_df(year=None):
     """Returns vacation days as a DataFrame, optionally filtered by year."""
     try:
@@ -586,9 +606,10 @@ def get_vacation_days_df(year=None):
             query = "SELECT datum, name FROM vacation_days WHERE EXTRACT(YEAR FROM datum) = :year ORDER BY datum"
             df = pd.read_sql(text(query), engine, params={"year": year})
             df.columns = ['Datum', 'Name']
-            return df
+            return df.copy()
         else:
-            return pd.read_sql("SELECT datum as Datum, name as Name FROM vacation_days ORDER BY datum", engine)
+            df = pd.read_sql("SELECT datum as Datum, name as Name FROM vacation_days ORDER BY datum", engine)
+            return df.copy()
     except:
         return pd.DataFrame(columns=['Datum', 'Name'])
 
@@ -598,6 +619,7 @@ def delete_holiday(datum):
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM holidays WHERE datum = :datum"), {"datum": datum})
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error deleting holiday: {e}")
@@ -609,6 +631,7 @@ def delete_vacation_day(datum):
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM vacation_days WHERE datum = :datum"), {"datum": datum})
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error deleting vacation day: {e}")
@@ -621,6 +644,7 @@ def update_holiday(datum, new_name):
             conn.execute(text("UPDATE holidays SET name = :name WHERE datum = :datum"), 
                         {"name": new_name, "datum": datum})
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error updating holiday: {e}")
@@ -633,6 +657,7 @@ def update_vacation_day(datum, new_name):
             conn.execute(text("UPDATE vacation_days SET name = :name WHERE datum = :datum"), 
                         {"name": new_name, "datum": datum})
             conn.commit()
+            clear_cache()
             return True
     except Exception as e:
         print(f"Error updating vacation day: {e}")
@@ -648,6 +673,7 @@ def save_holiday(datum, name):
                 conn.execute(text("INSERT INTO holidays (datum, name) VALUES (:datum, :name)"), 
                              {"datum": datum, "name": name})
                 conn.commit()
+                clear_cache()
                 return True
             return False
     except Exception as e:
@@ -664,6 +690,7 @@ def save_vacation_day(datum, name):
                 conn.execute(text("INSERT INTO vacation_days (datum, name) VALUES (:datum, :name)"), 
                              {"datum": datum, "name": name})
                 conn.commit()
+                clear_cache()
                 return True
             return False
     except Exception as e:
@@ -690,6 +717,21 @@ def populate_german_holidays(year):
         return (0, "workalendar library not installed. Will be available after deployment to Streamlit Cloud.")
     except Exception as e:
         return (0, f"Error: {str(e)}")
+
+def clear_cache():
+    """Clears cached data after any mutation."""
+    cached_funcs = [
+        load_data,
+        get_employees,
+        get_projects,
+        load_holidays,
+        load_vacation_days,
+        get_holidays_df,
+        get_vacation_days_df
+    ]
+    for func in cached_funcs:
+        if hasattr(func, "cache_clear"):
+            func.cache_clear()
 
 def generate_pdf_report(year, filename):
     """Generates a PDF report for the given year."""
