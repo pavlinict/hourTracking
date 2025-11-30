@@ -275,11 +275,6 @@ with tab1:
                             else:
                                 st.error("Fehler beim Speichern.")
 
-# # --- Tab 2: Mitarbeiter & Projekte ---
-# with tab2:
-#     st.header("Verwaltung")
-    
-#     tab2_1, tab2_2 = st.tabs(["Mitarbeiter", "Projekte"])
     
 # Sub-Tab: Mitarbeiter
 with tab2_1:
@@ -305,7 +300,7 @@ with tab2_1:
         st.caption("Aktuelle Mitarbeiter")
         if employees:
             for emp in employees:
-                col_name, col_save, col_delete = st.columns([4, 2, 1])
+                col_name, col_save, col_delete = st.columns([4, 2, 2])
                 new_name = col_name.text_input("Name", value=emp, key=f"emp_edit_{emp}", label_visibility="collapsed")
                 if col_save.button("Speichern", key=f"emp_save_{emp}"):
                     if new_name.strip() and new_name.strip() != emp:
@@ -355,7 +350,7 @@ with tab2_2:
         st.caption("Aktuelle Projekte")
         if all_projects:
             for proj in all_projects:
-                col_proj_name, col_proj_save, col_proj_delete = st.columns([4, 2, 1])
+                col_proj_name, col_proj_save, col_proj_delete = st.columns([4, 2, 2])
                 edited_proj = col_proj_name.text_input("Projektname", value=proj, key=f"proj_edit_{proj}", label_visibility="collapsed")
                 if col_proj_save.button("Speichern", key=f"proj_save_{proj}"):
                     if edited_proj.strip() and edited_proj.strip() != proj:
