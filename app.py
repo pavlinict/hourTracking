@@ -18,7 +18,7 @@ if not db_success:
     st.stop()
 
 # Tabs
-tab1, tab2, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Einstellungen"])
+tab1, tab2_1, tab2_2, tab4 = st.tabs(["Übersicht", "Mitarbeiter", "Projekte", "Einstellungen"])
 
 # --- Tab 1: Übersicht (Matrix View) ---
 with tab1:
@@ -275,132 +275,132 @@ with tab1:
                             else:
                                 st.error("Fehler beim Speichern.")
 
-# --- Tab 2: Mitarbeiter & Projekte ---
-with tab2:
-    st.header("Verwaltung")
+# # --- Tab 2: Mitarbeiter & Projekte ---
+# with tab2:
+#     st.header("Verwaltung")
     
-    tab2_1, tab2_2 = st.tabs(["Mitarbeiter", "Projekte"])
+#     tab2_1, tab2_2 = st.tabs(["Mitarbeiter", "Projekte"])
     
-    # Sub-Tab: Mitarbeiter
-    with tab2_1:
-        employees = utils.get_employees()
-        col1, col2 = st.columns(2)
+# Sub-Tab: Mitarbeiter
+with tab2_1:
+    employees = utils.get_employees()
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Neuen Mitarbeiter anlegen")
+        with st.form("add_employee_form"):
+            new_emp = st.text_input("Name", placeholder="z. B. Max Mustermann")
+            add_clicked = st.form_submit_button("Hinzufügen")
+        if add_clicked:
+            if new_emp:
+                if utils.save_employee(new_emp.strip()):
+                    st.success(f"Mitarbeiter '{new_emp}' hinzugefügt.")
+                    st.rerun()
+                else:
+                    st.warning("Mitarbeiter existiert bereits.")
+            else:
+                st.error("Bitte Name eingeben.")
         
-        with col1:
-            st.subheader("Neuen Mitarbeiter anlegen")
-            with st.form("add_employee_form"):
-                new_emp = st.text_input("Name", placeholder="z. B. Max Mustermann")
-                add_clicked = st.form_submit_button("Hinzufügen")
-            if add_clicked:
-                if new_emp:
-                    if utils.save_employee(new_emp.strip()):
-                        st.success(f"Mitarbeiter '{new_emp}' hinzugefügt.")
+        st.write("---")
+        st.caption("Aktuelle Mitarbeiter")
+        if employees:
+            for emp in employees:
+                col_name, col_save, col_delete = st.columns([4, 2, 1])
+                new_name = col_name.text_input("Name", value=emp, key=f"emp_edit_{emp}", label_visibility="collapsed")
+                if col_save.button("Speichern", key=f"emp_save_{emp}"):
+                    if new_name.strip() and new_name.strip() != emp:
+                        utils.rename_employee(emp, new_name.strip())
+                        st.success(f"'{emp}' in '{new_name}' umbenannt.")
                         st.rerun()
                     else:
-                        st.warning("Mitarbeiter existiert bereits.")
-                else:
-                    st.error("Bitte Name eingeben.")
-            
-            st.write("---")
-            st.caption("Aktuelle Mitarbeiter")
-            if employees:
-                for emp in employees:
-                    col_name, col_save, col_delete = st.columns([4, 2, 1])
-                    new_name = col_name.text_input("Name", value=emp, key=f"emp_edit_{emp}", label_visibility="collapsed")
-                    if col_save.button("Speichern", key=f"emp_save_{emp}"):
-                        if new_name.strip() and new_name.strip() != emp:
-                            utils.rename_employee(emp, new_name.strip())
-                            st.success(f"'{emp}' in '{new_name}' umbenannt.")
+                        st.warning("Bitte neuen Namen eingeben.")
+                with col_delete.popover(f"🗑️ {emp}", use_container_width=True):
+                    st.warning("Dieses Löschen entfernt alle Einträge dieses Mitarbeiters!")
+                    if st.button("Löschen bestätigen", key=f"emp_delete_confirm_{emp}", type="primary"):
+                        if utils.remove_employee(emp):
+                            st.success(f"Mitarbeiter '{emp}' und alle Einträge gelöscht.")
                             st.rerun()
                         else:
-                            st.warning("Bitte neuen Namen eingeben.")
-                    with col_delete.popover(f"🗑️ {emp}"):
-                        st.warning("Dieses Löschen entfernt alle Einträge dieses Mitarbeiters!")
-                        if st.button("Löschen bestätigen", key=f"emp_delete_confirm_{emp}", type="primary"):
-                            if utils.remove_employee(emp):
-                                st.success(f"Mitarbeiter '{emp}' und alle Einträge gelöscht.")
-                                st.rerun()
-                            else:
-                                st.error("Löschen fehlgeschlagen.")
-            else:
-                st.info("Noch keine Mitarbeiter angelegt.")
-                    
-        with col2:
-            st.subheader("Hinweis")
-            st.write("Bearbeite oder lösche Mitarbeiter direkt in der Liste. Änderungen werden sofort übernommen.")
+                            st.error("Löschen fehlgeschlagen.")
+        else:
+            st.info("Noch keine Mitarbeiter angelegt.")
+                
+    with col2:
+        st.subheader("Hinweis")
+        st.write("Bearbeite oder lösche Mitarbeiter direkt in der Liste. Änderungen werden sofort übernommen.")
 
-    # Sub-Tab: Projekte & Zuweisung
-    with tab2_2:
-        col_p1, col_p2 = st.columns(2)
-        
-        with col_p1:
-            st.subheader("Projekte verwalten")
-            all_projects = utils.get_projects()
-            # Add Project
-            with st.form("add_project_form"):
-                new_proj_name = st.text_input("Neues Projekt", placeholder="z. B. Kundenprojekt A")
-                add_project_clicked = st.form_submit_button("Projekt erstellen")
-            if add_project_clicked:
-                if new_proj_name:
-                    if utils.add_project(new_proj_name.strip()):
-                        st.success(f"Projekt '{new_proj_name}' erstellt.")
-                        st.rerun()
-                    else:
-                        st.error("Projekt konnte nicht erstellt werden (ggf. bereits vorhanden).")
+# Sub-Tab: Projekte & Zuweisung
+with tab2_2:
+    col_p1, col_p2 = st.columns(2)
+    
+    with col_p1:
+        st.subheader("Projekte verwalten")
+        all_projects = utils.get_projects()
+        # Add Project
+        with st.form("add_project_form"):
+            new_proj_name = st.text_input("Neues Projekt", placeholder="z. B. Kundenprojekt A")
+            add_project_clicked = st.form_submit_button("Projekt erstellen")
+        if add_project_clicked:
+            if new_proj_name:
+                if utils.add_project(new_proj_name.strip()):
+                    st.success(f"Projekt '{new_proj_name}' erstellt.")
+                    st.rerun()
                 else:
-                    st.error("Bitte einen Projektnamen eingeben.")
-            
-            # List / inline edit/delete
-            st.write("---")
-            st.caption("Aktuelle Projekte")
-            if all_projects:
-                for proj in all_projects:
-                    col_proj_name, col_proj_save, col_proj_delete = st.columns([4, 2, 1])
-                    edited_proj = col_proj_name.text_input("Projektname", value=proj, key=f"proj_edit_{proj}", label_visibility="collapsed")
-                    if col_proj_save.button("Speichern", key=f"proj_save_{proj}"):
-                        if edited_proj.strip() and edited_proj.strip() != proj:
-                            if utils.rename_project(proj, edited_proj.strip()):
-                                st.success(f"Projekt '{proj}' in '{edited_proj}' umbenannt.")
-                                st.rerun()
-                            else:
-                                st.error("Umbenennen fehlgeschlagen.")
+                    st.error("Projekt konnte nicht erstellt werden (ggf. bereits vorhanden).")
+            else:
+                st.error("Bitte einen Projektnamen eingeben.")
+        
+        # List / inline edit/delete
+        st.write("---")
+        st.caption("Aktuelle Projekte")
+        if all_projects:
+            for proj in all_projects:
+                col_proj_name, col_proj_save, col_proj_delete = st.columns([4, 2, 1])
+                edited_proj = col_proj_name.text_input("Projektname", value=proj, key=f"proj_edit_{proj}", label_visibility="collapsed")
+                if col_proj_save.button("Speichern", key=f"proj_save_{proj}"):
+                    if edited_proj.strip() and edited_proj.strip() != proj:
+                        if utils.rename_project(proj, edited_proj.strip()):
+                            st.success(f"Projekt '{proj}' in '{edited_proj}' umbenannt.")
+                            st.rerun()
                         else:
-                            st.warning("Bitte neuen Projektnamen eingeben.")
-                    with col_proj_delete.popover(f"🗑️ {proj}"):
-                        st.warning("Dieses Löschen entfernt alle Einträge für dieses Projekt!")
-                        if st.button("Projekt löschen", key=f"proj_delete_confirm_{proj}", type="primary"):
-                            if utils.delete_project(proj):
-                                st.success(f"Projekt '{proj}' und alle Einträge gelöscht.")
-                                st.rerun()
-                            else:
-                                st.error("Löschen fehlgeschlagen.")
-            else:
-                st.info("Keine Projekte vorhanden.")
-                
-        with col_p2:
-            st.subheader("Projekt-Zuweisung")
-            employees = utils.get_employees()
-            if employees:
-                assign_emp = st.selectbox("Mitarbeiter für Zuweisung", employees, key="assign_emp")
-                
-                # Multi-select for projects
-                all_projects = utils.get_projects()
-                current_assigned = utils.get_assigned_projects(assign_emp)
-                
-                selected_projects = st.multiselect(
-                    "Zugewiesene Projekte",
-                    all_projects,
-                    default=current_assigned
-                )
-                
-                if st.button("Zuweisung speichern"):
-                    if utils.update_assigned_projects(assign_emp, selected_projects):
-                        st.success("Gespeichert!")
-                        st.rerun()
+                            st.error("Umbenennen fehlgeschlagen.")
                     else:
-                        st.error("Fehler beim Speichern.")
-            else:
-                st.info("Bitte erst Mitarbeiter anlegen.")
+                        st.warning("Bitte neuen Projektnamen eingeben.")
+                with col_proj_delete.popover(f"🗑️ {proj}", use_container_width=True):
+                    st.warning("Dieses Löschen entfernt alle Einträge für dieses Projekt!")
+                    if st.button("Projekt löschen", key=f"proj_delete_confirm_{proj}", type="primary"):
+                        if utils.delete_project(proj):
+                            st.success(f"Projekt '{proj}' und alle Einträge gelöscht.")
+                            st.rerun()
+                        else:
+                            st.error("Löschen fehlgeschlagen.")
+        else:
+            st.info("Keine Projekte vorhanden.")
+            
+    with col_p2:
+        st.subheader("Projekt-Zuweisung")
+        employees = utils.get_employees()
+        if employees:
+            assign_emp = st.selectbox("Mitarbeiter für Zuweisung", employees, key="assign_emp")
+            
+            # Multi-select for projects
+            all_projects = utils.get_projects()
+            current_assigned = utils.get_assigned_projects(assign_emp)
+            
+            selected_projects = st.multiselect(
+                "Zugewiesene Projekte",
+                all_projects,
+                default=current_assigned
+            )
+            
+            if st.button("Zuweisung speichern"):
+                if utils.update_assigned_projects(assign_emp, selected_projects):
+                    st.success("Gespeichert!")
+                    st.rerun()
+                else:
+                    st.error("Fehler beim Speichern.")
+        else:
+            st.info("Bitte erst Mitarbeiter anlegen.")
 
 # --- Tab 3: Berichte ---
 # with tab3:
